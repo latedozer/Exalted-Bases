@@ -1,0 +1,139 @@
+# Exalted Items: change log
+
+Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
+for them.
+
+## 0.10.5 (2026-11-15)
+
+- Fixed: 0.10.4 crashed the game when a character was loaded. The slot's frame was a picture
+  widget placed beside the stash slots, and the game takes everything in that group for a
+  slot. The frame is now painted into an adjusted copy of the stash background, where the
+  game's own frames are. The layout gets the slot and nothing else, as in 0.10.3.
+
+## 0.10.4 (2026-11-15)
+
+- The crystal's stash slot now continues a row of slots instead of standing alone: with this
+  mod set's stash it is one place further right, directly left of Diablo's Horn.
+- The slot has a frame. The game's frames are painted into the stash background, so the
+  plugin cuts the Western Worldstone Shard's frame out of that background when the game
+  starts and puts it behind the new slot (mouse and controller, both picture sizes).
+
+## 0.10.3 (2026-11-15)
+
+- Restoration Crystals pile up in the stash. The crystal gets a slot of its own in the stash's
+  stacking tabs, the way the game keeps runes, keys and Worldstone Shards: one more slot in
+  the stash layout (mouse and controller), in the free place nearest to the Western Worldstone
+  Shard, and the crystal's row is marked as a stacking material. The mod's layout files are
+  read, not changed.
+- New setting `stash_slot` under `[crystal]` (default `true`), also in the settings menu.
+- The slot has no frame painted for it in the stash background unless the background already
+  has an empty one there.
+
+## 0.10.2 (2026-11-15)
+
+- The Restoration Crystal's name is written in orange, the colour of essences, keys, runes
+  and Worldstone Shards. The game colours its own materials by their item code, which a new
+  item cannot share, so the colour code is put in front of the name.
+- New setting `name_color` under `[crystal]` (default `"orange"`).
+
+## 0.10.1 (2026-11-15)
+
+- The Restoration Crystal also drops from Blood Raven, the Countess and Nihlathak in Hell,
+  including their terror zone rows (14 loot rows). These bosses have no essence, so the crystal
+  gets the weight that gives it the same share of a drop as it has in Andariel's row (about
+  1.5%). `drop_weight_percent` scales it like the rest. Normal and Nightmare are unchanged.
+
+## 0.10.0 (2026-11-15)
+
+- New item: the Restoration Crystal, a Worldstone Shard that cannot be used on its own. Its
+  picture is that shard's, tinted purple by the plugin when the game starts. On the ground it
+  looks like the shard.
+- Only bosses drop it. It is listed beside the boss essence in every loot row that has one:
+  the five act bosses in Hell, including their first-kill and terror zone rows. Setting
+  `drop_weight_percent` (100 = as often as the essence, 0 = never).
+- The upgrade to exalted now takes one crystal instead of runes and a gem. In a recipe the
+  word `crystal` stands for the item; rune and gem codes still work.
+- New cube recipe, restoring: an exalted item plus a crystal gets every attribute listed for
+  its kind (body armor, helms, shields, belts, gloves, boots, staves/wands/orbs, other
+  weapons), each rolled in its range. Any quality, once per item. A restored item is marked,
+  shows "Restored", and the cube does not take it again.
+- Every attribute has its own on/off line under `[restore.<kind>]`.
+- New adjusted files: `misc.txt`, `itemstatcost.txt`, `properties.txt`, the crystal's two
+  pictures and its model description. The marker is stat number 500, with unused rows in
+  between, so that other mods adding stats cannot move it.
+- A settings file from an earlier version keeps its rune recipes until its `[recipes]` lines
+  are changed to `"crystal"`.
+- Not known yet, none of it has been run in the game: whether the game loads the new picture
+  file, and whether the cube recipes behave as the tables say.
+
+## 0.9.5 (2026-11-14)
+
+- Works with a mod of any name. The mod's files are read from `mods/<mod>/<mod>.mpq/data`,
+  whatever `<mod>` is. If the mod's folder has no `<mod>.mpq` but holds a single `.mpq` folder
+  with another name, that one is used.
+- The plugin's files now go beside the loader folder the plugin is installed in:
+  - installed for one mod (`mods/<mod>/d2rloader/plugins/`): `mods/<mod>/d2rloader/exalted-items/`, as before
+  - installed for every mod (`d2rloader/plugins/` in the game folder): `d2rloader/exalted-items/<mod>/`
+- When the plugin is moved between those two places, `codes.txt` is carried over on the next
+  start and the old adjusted copies are removed.
+- Messages no longer assume D2RMM.
+- Still not supported: a mod that is a packed `.mpq` archive file instead of a folder.
+
+## 0.9.4 (2026-11-14)
+
+- New setting `terror_zone_only` (off by default). When on, exalted bases drop only in terror
+  zones. Each exalted base carries the game's own terror zone drop condition; outside a terror
+  zone the game leaves it out of the roll, so other drops are unchanged.
+- Unique and set items on exalted bases and the cube recipes work the same with the setting on
+  or off.
+- Not known yet: whether chests opened inside a terror zone count.
+- This version was never installed on its own; it shipped as part of 0.9.5.
+
+## 0.9.3 (2026-11-14)
+
+- The cube upgrade to exalted no longer adds a level requirement, and the `upgrade_level_req`
+  setting is gone. The game cannot store a negative level requirement, so one added by the
+  upgrade could not be taken off again when the item is turned back to elite.
+
+## 0.9.2 (2026-11-14)
+
+- New cube recipe: any exalted item plus a low rune (El by default, setting `downgrade` under
+  `[recipes]`) becomes the same item on its elite base. Works for plain, magic, rare, set and
+  unique items.
+
+## 0.9.1 (2026-11-14)
+
+- Faster start: building the tables takes less than half the time and memory, and the game's
+  two picking routines are found without a search on the known game build.
+- Fix: unique and set rows the game can never pick (blank `spawnable`, or `disabled`) were
+  counted when choosing which family base an exalted item borrows from, so some unique and set
+  rolls were lost. Only rows the game can pick are counted now.
+- The log has a line saying how long the start took.
+- The adjusted files are byte for byte the same as 0.9.0's.
+
+## 0.9.0 (2026-11-14)
+
+- Exalted bases are ordinary members of the game's loot tables. They drop by item level like
+  any other base; the separate drop roll and its drop chance setting are gone.
+- The tier is spread over ten level tables, counted down from `drop_level_max` (default 96).
+  Above the game's own top table the loot rows are continued upward.
+- Unique and set items on exalted bases come from the game's own picking routines. Nothing is
+  added to `uniqueitems.txt`, `setitems.txt` or `sets.txt` any more: the item is the real unique
+  or set piece, on an exalted base. Settings `unique_drops` and `set_drops` choose which tiers
+  of the family can appear.
+- Exalted base codes are saved in `codes.txt` and reused on every start, so adding or removing
+  other mods cannot turn a saved exalted item into another item.
+- The first-use warning was removed.
+
+## 0.8.5 (2026-11-12)
+
+- Proof of concept. Exalted versions of every elite base with their names and models, cube
+  upgrade recipes, and a settings menu through the "I Hate TOMLs" plugin.
+- The mod's files are never changed; the game is handed adjusted copies.
+- Unique items on exalted bases were done by adding a copy of each unique to
+  `uniqueitems.txt`. Set items were done by a hook on the game's set picking routine.
+- Drops came from a separate pool with its own roll for monsters above a set level.
+- Known problem, fixed in 0.9.0 by removing the copies: the copied unique rows sat at the end
+  of the unique table. Anything that remembers a unique by its row number (the game's record
+  of found items, a grail) could be left pointing at a row that no longer exists once the
+  copies were gone.

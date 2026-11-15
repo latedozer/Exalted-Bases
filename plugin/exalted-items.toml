@@ -1,0 +1,181 @@
+# Exalted Items: a fourth item tier above elite.
+#
+# Every time the game starts, the plugin reads the armor/weapons tables of the active mod
+# (or the game's own, if the mod has none) and builds an exalted version of every elite base,
+# with its name, model and cube recipes, and the Restoration Crystal those recipes use.
+#
+# The mod's files are never changed. Adjusted copies are kept in
+#   mods/<mod>/d2rloader/exalted-items/data/     (plugin installed in that mod's d2rloader folder)
+#   d2rloader/exalted-items/<mod>/data/          (plugin installed in the game's d2rloader folder)
+# and the game is handed a copy whenever it opens the matching mod file.
+# Changes here take effect on the next game start. With the "I Hate TOMLs" plugin installed,
+# the same settings can be changed from its in-game menu.
+
+[exalted-items]
+# false: the game reads the mod's files as they are.
+enabled = true
+
+# Item level of the highest exalted bases.
+#
+# An exalted base is an ordinary item. The game sorts every base into a loot table by its
+# item level (one table per three levels), and whatever drops items of that level drops the
+# exalted bases of that level too: monsters, bosses and chests alike. There is no separate
+# drop chance.
+#
+# The tier is spread over ten of those tables, three levels apart, counted down from this
+# value. With 96 the exalted bases have item levels 69, 72 ... 96, each keeping the place its
+# elite base has among the elite bases (a low elite base becomes a low exalted base).
+#
+#   96 is the highest table the game builds. Its own loot rows stop at 87, so for the levels
+#      above that the plugin continues them: monsters of level 88, 91 and 94 or higher (terror
+#      zones, unique monsters in the highest areas, bosses of that level, mods that raise
+#      monster levels) drop from the higher tables.
+#   87 keeps the whole tier inside the game's own loot rows; nothing is added to them.
+#   30 is the lowest value (item levels 3 to 30).
+drop_level_max = 96
+
+# true: exalted bases drop only in terror zones.
+#
+# Each exalted base then carries the game's own "in a terror zone" condition, the one the game
+# uses for its terror zone loot. The bases stay in the same loot tables; outside a terror zone
+# the game simply leaves them out of the roll, so those drops are what they are without the
+# plugin. Unique and set items on exalted bases, and the cube recipes, work the same either way.
+# false: they drop wherever items of their level drop.
+terror_zone_only = false
+
+# Text put in front of the elite base's name.
+name_prefix = "Exalted "
+
+# How much of the game's exceptional -> elite stat step is repeated on top of the elite base.
+# 100 = the same step again, 50 = half of it, 0 = same stats as elite.
+stat_step_percent = 100
+
+# Highest level requirement an exalted base can have.
+level_req_cap = 90
+
+# Which uniques a dropped exalted base can become when it rolls unique. An exalted base has no
+# uniques of its own; it borrows those of its family (an Exalted Shako: Cap, War Hat, Shako).
+#   "normal", "exceptional" or "elite" = the uniques of that one tier of its family
+#   a list, such as "exceptional, elite" = those tiers together
+#   "all"  = the whole family, as one list
+#   "off"  = none: the roll falls back as the game does for a base without uniques (a rare)
+# Nothing is added to the unique table: the item is the real unique, on an exalted base.
+unique_drops = "all"
+
+# The same choice for set items ("off": the roll falls back to a magic item).
+set_drops = "all"
+
+# The Restoration Crystal: one item with two uses in the cube.
+#   elite item + crystal    -> the same item on its exalted base   (see [recipes])
+#   exalted item + crystal  -> the same item, restored             (see [restore])
+# It is a Worldstone Shard that cannot be used on its own, with that shard's picture in purple.
+[crystal]
+# false: there is no such item. Recipes that name it are left out, so give the recipes below
+# other materials (runes, gems) if you turn it off.
+enabled = true
+
+name = "Restoration Crystal"
+
+# The colour its name is written in. "orange" is the colour the game gives essences, keys,
+# runes and Worldstone Shards. Others: white, red, green, blue, gold, grey, tan, yellow,
+# darkgreen, purple.
+name_color = "orange"
+
+# Only bosses drop it. Each act boss in Hell has an essence in its loot rows (Andariel and
+# Duriel the Twisted Essence of Suffering, and so on). The crystal is listed beside that
+# essence, in the same rows, with this much of the essence's weight:
+#   100 = as often as that boss drops its essence, 50 = half as often, 0 = it never drops.
+# Blood Raven, the Countess and Nihlathak drop it in Hell as well. They have no essence, so
+# there the crystal has the same chance per drop as it has from Andariel, and this setting
+# scales it the same way.
+drop_weight_percent = 100
+
+# Crystals pile up in the stash. The stash's stacking tabs (where gems, runes, keys and
+# Worldstone Shards are kept as piles) get one more slot, for the crystal, in the free place
+# nearest to the Western Worldstone Shard's slot. Put a crystal there the way you put a rune
+# there; take one out to use it in the cube. How many fit in the pile is the loader's
+# set_materials_limit (d2rloader.toml). false = no slot: the crystal is an ordinary item.
+stash_slot = true
+
+# Cube recipes: an ELITE item of that kind + these materials -> the same item on its exalted base.
+# Names are <unique|set|rare|magic|crafted|normal>_<weapon|armor>. Materials are item codes
+# separated by spaces: the word crystal is the Restoration Crystal, r01-r33 are runes, gp? are
+# perfect gems. "crystal,qty=2" asks for two. "" turns a recipe off.
+# The rune recipes used before the crystal, which continue the game's own rune progression:
+#   unique/set weapon "r26 r30 gpg" (Vex Ber)      unique/set armor "r29 r27 gpw" (Sur Ohm)
+#   rare weapon       "r29 r33 gpb" (Sur Zod)      rare armor       "r28 r32 gpv" (Lo Cham)
+[recipes]
+unique_weapon = "crystal"
+unique_armor = "crystal"
+set_weapon = "crystal"
+set_armor = "crystal"
+rare_weapon = "crystal"
+rare_armor = "crystal"
+magic_weapon = ""
+magic_armor = ""
+crafted_weapon = ""
+crafted_armor = ""
+normal_weapon = ""
+normal_armor = ""
+
+# Back to elite: any exalted item (plain, magic, rare, set, unique...) + these materials -> the
+# same item on its elite base. r01 is the El rune. "" turns it off.
+downgrade = "r01"
+
+# Restoring: an EXALTED item of any quality + the material -> the same item with every
+# attribute listed for its kind below, each rolled in its range. It works once per item: a
+# restored item is marked, and the cube does not take a marked item again.
+# The attributes stay on the item when it is turned back to elite.
+[restore]
+enabled = true
+material = "crystal"
+# true: a restored item shows the line "Restored".
+show_line = true
+
+# One line per attribute: false leaves it out of restores made from then on (items already
+# restored keep what they got). A kind with every line false cannot be restored.
+[restore.body_armor]
+all_resistances = true     # +4 to 7%
+enhanced_defense = true    # +30 to 40%
+maximum_life = true        # +3 to 4%
+
+# Helms include circlets, druid pelts and barbarian helms.
+[restore.helms]
+enhanced_defense = true    # +30 to 40%
+maximum_life = true        # +3 to 4%
+replenish_life = true      # +5 to 10
+
+# Shields include paladin shields and necromancer heads.
+[restore.shields]
+all_resistances = true     # +4 to 7%
+enhanced_defense = true    # +30 to 40%
+chance_to_block = true     # +5 to 10%
+
+[restore.belts]
+faster_run_walk = true     # +5 to 10%
+maximum_mana = true        # +5%
+attack_speed = true        # +5 to 10%
+
+[restore.gloves]
+attack_speed = true        # +5 to 10%
+attack_rating = true       # +5 to 10%
+faster_hit_recovery = true # +5 to 10%
+
+[restore.boots]
+faster_run_walk = true     # +5 to 10%
+faster_hit_recovery = true # +5 to 10%
+maximum_mana = true        # +5%
+
+[restore.staves_wands_orbs]
+faster_cast_rate = true    # +5 to 10%
+maximum_mana = true        # +5%
+all_resistances = true     # +4 to 7%
+
+# Every other weapon.
+[restore.weapons]
+enhanced_damage = true     # +15 to 30%
+attack_speed = true        # +5 to 10%
+attack_rating = true       # +5 to 10%
+
+[d2rl]
+match = ["exalted-items.enabled", "exalted-items.drop_level_max", "exalted-items.terror_zone_only", "exalted-items.stat_step_percent", "exalted-items.level_req_cap", "exalted-items.unique_drops", "exalted-items.set_drops", "crystal.enabled", "restore.enabled"]
