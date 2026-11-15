@@ -87,8 +87,8 @@ $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry1" | sed 's/^/  /'
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry1" >/dev/null || bad "crystal checks"
 gen cry2 crystal=1 >/dev/null
 diff -r "$N/cry1" "$N/cry2" >/dev/null && echo "  two runs identical" || bad "two runs with the crystal differ"
-gen cry3 crystal=1 restoreoff=belts.maximum_mana restoreoff=gloves.attack_speed restoreoff=gloves.attack_rating restoreoff=gloves.faster_hit_recovery >/dev/null
-$CRY "$MOD" "$VAN" "$N/cry0" "$N/cry3" off=belts.maximum_mana,gloves.attack_speed,gloves.attack_rating,gloves.faster_hit_recovery >/dev/null \
+gen cry3 crystal=1 restoreoff=belts.maximum_mana restoreoff=gloves.attack_speed restoreoff=gloves.attack_rating restoreoff=gloves.faster_hit_recovery restoreoff=gloves.requirements >/dev/null
+$CRY "$MOD" "$VAN" "$N/cry0" "$N/cry3" off=belts.maximum_mana,gloves.attack_speed,gloves.attack_rating,gloves.faster_hit_recovery,gloves.requirements >/dev/null \
 	&& echo "  attributes turned off are left out; a kind with all of them off has no restore recipe" || bad "attributes turned off"
 gen cry4 crystal=1 crystaldrop=50 >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry4" drop=50 >/dev/null && echo "  drop weight 50%: half the essence's weight" || bad "drop weight setting"

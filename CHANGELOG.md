@@ -3,6 +3,13 @@
 Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
 for them.
 
+## 0.10.6 (2026-11-15)
+
+- Restoring also lowers the item's requirements by 5 to 10% (strength and dexterity; the
+  game's "Requirements -X%" attribute), for every kind of item. Each kind has a new
+  `requirements` line under `[restore.<kind>]` to turn it off. Items restored before this
+  version keep what they got and cannot be restored again.
+
 ## 0.10.5 (2026-11-15)
 
 - Fixed: 0.10.4 crashed the game when a character was loaded. The slot's frame was a picture

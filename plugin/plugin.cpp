@@ -1681,7 +1681,7 @@ constexpr D2RL::PluginInfo kPluginInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = "exalted-items",
 	.name        = "Exalted Items",
-	.version     = "0.10.5",
+	.version     = "0.10.6",
 	.author      = "Latedozer",
 	.description = "A fourth item tier above elite, built from the active mod's own item tables.",
 	.flags       = D2RL::PluginFlags::Shared | D2RL::PluginFlags::NativeHooks,

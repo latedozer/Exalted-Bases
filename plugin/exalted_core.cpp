@@ -1942,9 +1942,12 @@ void AddRestores(Io& io, Bank& bank, const Config& config, const std::map<std::s
 	}
 	const int cDesc = t.Col("description"), cEnabled = t.Col("enabled"), cVersion = t.Col("version"), cNum = t.Col("numinputs"), cOut = t.Col("output"), cInput = t.Col("input 1");
 	const int cOp = t.Col("op"), cParam = t.Col("param"), cValue = t.Col("value");
-	int       cMod[4], cMin[4], cMax[4];
+	// The marker and up to four attributes: the five "mod" slots a cube recipe has.
+	constexpr int kMods = 5;
+	static_assert(std::size(kRestoreKinds[0].attributes) + 1 <= kMods, "a restore recipe has room for the marker and four attributes");
+	int       cMod[kMods], cMin[kMods], cMax[kMods];
 	bool      columns = cDesc >= 0 && cNum >= 0 && cOut >= 0 && cInput >= 0 && cOp >= 0 && cParam >= 0 && cValue >= 0;
-	for (int i = 0; i < 4; ++i) {
+	for (int i = 0; i < kMods; ++i) {
 		const std::string name = "mod " + std::to_string(i + 1);
 		cMod[i] = t.Col(name.c_str());
 		cMin[i] = t.Col((name + " min").c_str());

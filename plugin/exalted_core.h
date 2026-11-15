@@ -63,28 +63,28 @@ struct RestoreKind {
 	const char* key;   // settings section: [restore.<key>]
 	const char* label;
 	const char* types; // item types (itemtypes.txt codes) separated by spaces
-	RestoreAttribute attributes[3];
+	RestoreAttribute attributes[4];
 };
 
 // A base belongs to the first kind in this list that one of its item types is: a staff is
 // "staves, wands, orbs" before it is a weapon.
 inline constexpr RestoreKind kRestoreKinds[] = {
 	{ "body_armor", "Body armor", "tors",
-	  { { "all_resistances", "res-all", 4, 7, "All resistances +4 to 7%" }, { "enhanced_defense", "ac%", 30, 40, "Enhanced defense +30 to 40%" }, { "maximum_life", "hp%", 3, 4, "Maximum life +3 to 4%" } } },
+	  { { "all_resistances", "res-all", 4, 7, "All resistances +4 to 7%" }, { "enhanced_defense", "ac%", 30, 40, "Enhanced defense +30 to 40%" }, { "maximum_life", "hp%", 3, 4, "Maximum life +3 to 4%" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 	{ "helms", "Helms", "helm",
-	  { { "enhanced_defense", "ac%", 30, 40, "Enhanced defense +30 to 40%" }, { "maximum_life", "hp%", 3, 4, "Maximum life +3 to 4%" }, { "replenish_life", "regen", 5, 10, "Replenish life +5 to 10" } } },
+	  { { "enhanced_defense", "ac%", 30, 40, "Enhanced defense +30 to 40%" }, { "maximum_life", "hp%", 3, 4, "Maximum life +3 to 4%" }, { "replenish_life", "regen", 5, 10, "Replenish life +5 to 10" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 	{ "shields", "Shields", "shld",
-	  { { "all_resistances", "res-all", 4, 7, "All resistances +4 to 7%" }, { "enhanced_defense", "ac%", 30, 40, "Enhanced defense +30 to 40%" }, { "chance_to_block", "block", 5, 10, "Chance to block +5 to 10%" } } },
+	  { { "all_resistances", "res-all", 4, 7, "All resistances +4 to 7%" }, { "enhanced_defense", "ac%", 30, 40, "Enhanced defense +30 to 40%" }, { "chance_to_block", "block", 5, 10, "Chance to block +5 to 10%" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 	{ "belts", "Belts", "belt",
-	  { { "faster_run_walk", "move1", 5, 10, "Faster run/walk +5 to 10%" }, { "maximum_mana", "mana%", 5, 5, "Maximum mana +5%" }, { "attack_speed", "swing1", 5, 10, "Increased attack speed +5 to 10%" } } },
+	  { { "faster_run_walk", "move1", 5, 10, "Faster run/walk +5 to 10%" }, { "maximum_mana", "mana%", 5, 5, "Maximum mana +5%" }, { "attack_speed", "swing1", 5, 10, "Increased attack speed +5 to 10%" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 	{ "gloves", "Gloves", "glov",
-	  { { "attack_speed", "swing1", 5, 10, "Increased attack speed +5 to 10%" }, { "attack_rating", "att%", 5, 10, "Attack rating +5 to 10%" }, { "faster_hit_recovery", "balance1", 5, 10, "Faster hit recovery +5 to 10%" } } },
+	  { { "attack_speed", "swing1", 5, 10, "Increased attack speed +5 to 10%" }, { "attack_rating", "att%", 5, 10, "Attack rating +5 to 10%" }, { "faster_hit_recovery", "balance1", 5, 10, "Faster hit recovery +5 to 10%" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 	{ "boots", "Boots", "boot",
-	  { { "faster_run_walk", "move1", 5, 10, "Faster run/walk +5 to 10%" }, { "faster_hit_recovery", "balance1", 5, 10, "Faster hit recovery +5 to 10%" }, { "maximum_mana", "mana%", 5, 5, "Maximum mana +5%" } } },
+	  { { "faster_run_walk", "move1", 5, 10, "Faster run/walk +5 to 10%" }, { "faster_hit_recovery", "balance1", 5, 10, "Faster hit recovery +5 to 10%" }, { "maximum_mana", "mana%", 5, 5, "Maximum mana +5%" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 	{ "staves_wands_orbs", "Staves, wands, orbs", "staf wand orb",
-	  { { "faster_cast_rate", "cast1", 5, 10, "Faster cast rate +5 to 10%" }, { "maximum_mana", "mana%", 5, 5, "Maximum mana +5%" }, { "all_resistances", "res-all", 4, 7, "All resistances +4 to 7%" } } },
+	  { { "faster_cast_rate", "cast1", 5, 10, "Faster cast rate +5 to 10%" }, { "maximum_mana", "mana%", 5, 5, "Maximum mana +5%" }, { "all_resistances", "res-all", 4, 7, "All resistances +4 to 7%" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 	{ "weapons", "Weapons", "weap",
-	  { { "enhanced_damage", "dmg%", 15, 30, "Enhanced damage +15 to 30%" }, { "attack_speed", "swing1", 5, 10, "Increased attack speed +5 to 10%" }, { "attack_rating", "att%", 5, 10, "Attack rating +5 to 10%" } } },
+	  { { "enhanced_damage", "dmg%", 15, 30, "Enhanced damage +15 to 30%" }, { "attack_speed", "swing1", 5, 10, "Increased attack speed +5 to 10%" }, { "attack_rating", "att%", 5, 10, "Attack rating +5 to 10%" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 };
 
 // The crystal's line in the saved codes (see Config::savedCodes): "*crystal=<item code>".

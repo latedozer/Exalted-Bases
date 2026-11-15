@@ -1,8 +1,8 @@
-# Exalted Items: user guide (v0.10.5)
+# Exalted Items: user guide (v0.10.6)
 
 Exalted Items adds a fourth tier of weapons and armor above elite, called Exalted.
 
-v0.10.5 has passed its offline checks but has not been played yet. The Restoration Crystal,
+v0.10.6 has passed its offline checks but has not been played yet. The Restoration Crystal,
 its stash slot, the cube recipes and multiplayer are untested in the game.
 
 ## What it adds
@@ -54,6 +54,9 @@ rolled in its range. It works on any quality, once per item. A restored item say
 | Boots | Faster run/walk +5 to 10%, faster hit recovery +5 to 10%, maximum mana +5% |
 | Staves, wands, orbs | Faster cast rate +5 to 10%, maximum mana +5%, all resistances +4 to 7% |
 | Other weapons | Enhanced damage +15 to 30%, attack speed +5 to 10%, attack rating +5 to 10% |
+
+Every kind also gets **requirements -5 to 10%**: the strength and dexterity needed to equip
+the item go down by that much. The level requirement does not change.
 
 An attribute the item already has is added on top. The attributes stay when the item is
 turned back to elite, and the item cannot be restored a second time.

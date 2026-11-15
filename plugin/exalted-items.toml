@@ -138,44 +138,52 @@ show_line = true
 all_resistances = true     # +4 to 7%
 enhanced_defense = true    # +30 to 40%
 maximum_life = true        # +3 to 4%
+requirements = true        # strength and dexterity needed: -5 to 10%
 
 # Helms include circlets, druid pelts and barbarian helms.
 [restore.helms]
 enhanced_defense = true    # +30 to 40%
 maximum_life = true        # +3 to 4%
 replenish_life = true      # +5 to 10
+requirements = true        # strength and dexterity needed: -5 to 10%
 
 # Shields include paladin shields and necromancer heads.
 [restore.shields]
 all_resistances = true     # +4 to 7%
 enhanced_defense = true    # +30 to 40%
 chance_to_block = true     # +5 to 10%
+requirements = true        # strength and dexterity needed: -5 to 10%
 
 [restore.belts]
 faster_run_walk = true     # +5 to 10%
 maximum_mana = true        # +5%
 attack_speed = true        # +5 to 10%
+requirements = true        # strength and dexterity needed: -5 to 10%
 
 [restore.gloves]
 attack_speed = true        # +5 to 10%
 attack_rating = true       # +5 to 10%
 faster_hit_recovery = true # +5 to 10%
+requirements = true        # strength and dexterity needed: -5 to 10%
 
 [restore.boots]
 faster_run_walk = true     # +5 to 10%
 faster_hit_recovery = true # +5 to 10%
 maximum_mana = true        # +5%
+requirements = true        # strength and dexterity needed: -5 to 10%
 
 [restore.staves_wands_orbs]
 faster_cast_rate = true    # +5 to 10%
 maximum_mana = true        # +5%
 all_resistances = true     # +4 to 7%
+requirements = true        # strength and dexterity needed: -5 to 10%
 
 # Every other weapon.
 [restore.weapons]
 enhanced_damage = true     # +15 to 30%
 attack_speed = true        # +5 to 10%
 attack_rating = true       # +5 to 10%
+requirements = true        # strength and dexterity needed: -5 to 10%
 
 [d2rl]
 match = ["exalted-items.enabled", "exalted-items.drop_level_max", "exalted-items.terror_zone_only", "exalted-items.stat_step_percent", "exalted-items.level_req_cap", "exalted-items.unique_drops", "exalted-items.set_drops", "crystal.enabled", "restore.enabled"]

@@ -25,14 +25,14 @@ ESSENCES = {"tes", "ceh", "bet", "fed"}
 
 # The lists as the user set them (doc "Exalted Shard: attributes it could add", 2026-11-15).
 KINDS = [
-    ("body_armor", ["tors"], [("all_resistances", "res-all", 4, 7), ("enhanced_defense", "ac%", 30, 40), ("maximum_life", "hp%", 3, 4)]),
-    ("helms", ["helm"], [("enhanced_defense", "ac%", 30, 40), ("maximum_life", "hp%", 3, 4), ("replenish_life", "regen", 5, 10)]),
-    ("shields", ["shld"], [("all_resistances", "res-all", 4, 7), ("enhanced_defense", "ac%", 30, 40), ("chance_to_block", "block", 5, 10)]),
-    ("belts", ["belt"], [("faster_run_walk", "move1", 5, 10), ("maximum_mana", "mana%", 5, 5), ("attack_speed", "swing1", 5, 10)]),
-    ("gloves", ["glov"], [("attack_speed", "swing1", 5, 10), ("attack_rating", "att%", 5, 10), ("faster_hit_recovery", "balance1", 5, 10)]),
-    ("boots", ["boot"], [("faster_run_walk", "move1", 5, 10), ("faster_hit_recovery", "balance1", 5, 10), ("maximum_mana", "mana%", 5, 5)]),
-    ("staves_wands_orbs", ["staf", "wand", "orb"], [("faster_cast_rate", "cast1", 5, 10), ("maximum_mana", "mana%", 5, 5), ("all_resistances", "res-all", 4, 7)]),
-    ("weapons", ["weap"], [("enhanced_damage", "dmg%", 15, 30), ("attack_speed", "swing1", 5, 10), ("attack_rating", "att%", 5, 10)]),
+    ("body_armor", ["tors"], [("all_resistances", "res-all", 4, 7), ("enhanced_defense", "ac%", 30, 40), ("maximum_life", "hp%", 3, 4), ("requirements", "ease", -10, -5)]),
+    ("helms", ["helm"], [("enhanced_defense", "ac%", 30, 40), ("maximum_life", "hp%", 3, 4), ("replenish_life", "regen", 5, 10), ("requirements", "ease", -10, -5)]),
+    ("shields", ["shld"], [("all_resistances", "res-all", 4, 7), ("enhanced_defense", "ac%", 30, 40), ("chance_to_block", "block", 5, 10), ("requirements", "ease", -10, -5)]),
+    ("belts", ["belt"], [("faster_run_walk", "move1", 5, 10), ("maximum_mana", "mana%", 5, 5), ("attack_speed", "swing1", 5, 10), ("requirements", "ease", -10, -5)]),
+    ("gloves", ["glov"], [("attack_speed", "swing1", 5, 10), ("attack_rating", "att%", 5, 10), ("faster_hit_recovery", "balance1", 5, 10), ("requirements", "ease", -10, -5)]),
+    ("boots", ["boot"], [("faster_run_walk", "move1", 5, 10), ("faster_hit_recovery", "balance1", 5, 10), ("maximum_mana", "mana%", 5, 5), ("requirements", "ease", -10, -5)]),
+    ("staves_wands_orbs", ["staf", "wand", "orb"], [("faster_cast_rate", "cast1", 5, 10), ("maximum_mana", "mana%", 5, 5), ("all_resistances", "res-all", 4, 7), ("requirements", "ease", -10, -5)]),
+    ("weapons", ["weap"], [("enhanced_damage", "dmg%", 15, 30), ("attack_speed", "swing1", 5, 10), ("attack_rating", "att%", 5, 10), ("requirements", "ease", -10, -5)]),
 ]
 
 failures = []
