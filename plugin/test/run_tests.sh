@@ -82,32 +82,32 @@ gen c5 codes="$N/codes_reserved.txt" >/dev/null
 note "Restoration Crystal: the item, the restore recipes, the boss loot rows, the picture"
 CRY="python3 test/check_crystal.py"
 gen cry0 >/dev/null
-gen cry1 crystal=1 | tail -2 | grep -q "ok=1" || bad "generator run with the crystal"
+gen cry1 crystal=1 shard=0 | tail -3 | grep -q "ok=1" || bad "generator run with the crystal"
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry1" | sed 's/^/  /'
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry1" >/dev/null || bad "crystal checks"
-gen cry2 crystal=1 >/dev/null
+gen cry2 crystal=1 shard=0 >/dev/null
 diff -r "$N/cry1" "$N/cry2" >/dev/null && echo "  two runs identical" || bad "two runs with the crystal differ"
-gen cry3 crystal=1 restoreoff=belts.maximum_mana restoreoff=gloves.attack_speed restoreoff=gloves.attack_rating restoreoff=gloves.faster_hit_recovery restoreoff=gloves.requirements >/dev/null
+gen cry3 crystal=1 shard=0 restoreoff=belts.maximum_mana restoreoff=gloves.attack_speed restoreoff=gloves.attack_rating restoreoff=gloves.faster_hit_recovery restoreoff=gloves.requirements >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry3" off=belts.maximum_mana,gloves.attack_speed,gloves.attack_rating,gloves.faster_hit_recovery,gloves.requirements >/dev/null \
 	&& echo "  attributes turned off are left out; a kind with all of them off has no restore recipe" || bad "attributes turned off"
-gen cry4 crystal=1 crystaldrop=50 >/dev/null
+gen cry4 crystal=1 shard=0 crystaldrop=50 >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry4" drop=50 >/dev/null && echo "  drop weight 50%: half the essence's weight" || bad "drop weight setting"
-gen cry5 crystal=1 crystaldrop=0 restore=0 >/dev/null
+gen cry5 crystal=1 shard=0 crystaldrop=0 restore=0 >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry5" drop=0 restore=0 >/dev/null && echo "  drops off and restoring off: no loot row and no stat table touched" || bad "drops and restoring off"
-gen cry6 crystal=1 restoreline=0 >/dev/null
+gen cry6 crystal=1 shard=0 restoreline=0 >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6" line=0 >/dev/null && echo "  without the \"Restored\" line: the marker has no text" || bad "restored line off"
-gen cry6b crystal=1 crystalcolor=none >/dev/null
+gen cry6b crystal=1 shard=0 crystalcolor=none >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6b" color=none >/dev/null && echo "  name colour: orange like the game's materials by default; none leaves the name plain" || bad "name colour"
-gen cry6c crystal=1 crystalslot=0 >/dev/null
+gen cry6c crystal=1 shard=0 crystalslot=0 >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6c" slot=0 >/dev/null && [ ! -e "$N/cry6c/global/ui" ] && echo "  stash slot off: an ordinary item, no stash layout written" || bad "stash slot off"
 # The crystal's slot in the stash's stacking tabs: in the mod's layouts, and in the game's own
 # where a mod has none (a stand-in mod folder without its ui files).
 LAY=global/ui/layouts
-SLOTCODE="$(gen cry1s crystal=1 | sed -n "s/.*crystal='\([a-z0-9]*\)'.*/\1/p")"
+SLOTCODE="$(gen cry1s crystal=1 shard=0 | sed -n "s/.*crystal='\([a-z0-9]*\)'.*/\1/p")"
 for layout in "$LAY/bankexpansionlayouthd.json" "$LAY/controller/bankexpansionlayouthd.json"; do
 	if [ -f "$MOD/$layout" ]; then
-		python3 test/check_slot.py "$MOD/$layout" "$N/cry1s/$layout" "$SLOTCODE" frame | sed 's/^/  mod layout: /'
-		python3 test/check_slot.py "$MOD/$layout" "$N/cry1s/$layout" "$SLOTCODE" frame >/dev/null 2>&1 || bad "stash slot in the mod's $layout"
+		python3 test/check_slot.py "$MOD/$layout" "$N/cry1s/$layout" "$SLOTCODE" place=400:300 | sed 's/^/  mod layout: /'
+		python3 test/check_slot.py "$MOD/$layout" "$N/cry1s/$layout" "$SLOTCODE" place=400:300 >/dev/null 2>&1 || bad "stash slot in the mod's $layout"
 	fi
 done
 if [ -f "$MOD/hd/global/ui/panel/stash/advancedstash_expanded_cube.sprite" ]; then
@@ -135,7 +135,7 @@ if [ -f "$VAN/$LAY/bankexpansionlayouthd.json" ]; then
 	rm -rf "$N/noui" && mkdir -p "$N/noui/global"
 	for d in "$MOD"/*; do [ "$(basename "$d")" != global ] && ln -s "$d" "$N/noui/"; done
 	for d in "$MOD"/global/*; do [ "$(basename "$d")" != ui ] && ln -s "$d" "$N/noui/global/"; done
-	rm -rf "$N/cry1v" && "$N/gen_test" "$N/noui" "$VAN" "$N/cry1v" crystal=1 >/dev/null
+	rm -rf "$N/cry1v" && "$N/gen_test" "$N/noui" "$VAN" "$N/cry1v" crystal=1 shard=0 >/dev/null
 	for layout in "$LAY/bankexpansionlayouthd.json" "$LAY/controller/bankexpansionlayouthd.json"; do
 		python3 test/check_slot.py "$VAN/$layout" "$N/cry1v/$layout" "$SLOTCODE" | sed 's/^/  game layout: /'
 		python3 test/check_slot.py "$VAN/$layout" "$N/cry1v/$layout" "$SLOTCODE" >/dev/null 2>&1 || bad "stash slot in the game's own $layout"
@@ -144,17 +144,17 @@ if [ -f "$VAN/$LAY/bankexpansionlayouthd.json" ]; then
 else
 	echo "  stash slot in the game's own layout: skipped (no layout in the test data)"
 fi
-gen cry6d crystal=1 strip=0 >/dev/null
+gen cry6d crystal=1 shard=0 strip=0 >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6d" strip=0 >/dev/null && echo "  strip on downgrade off: no roll stats, no twins, recipes as before 0.11" || bad "strip on downgrade off"
 g++ -std=c++20 -O2 -Wall -Wextra -o "$N/strip_test" test/strip_test.cpp || bad "strip test build"
 for excel in global/excel global/excel/base; do "$N/strip_test" "$N/cry1/$excel" || bad "taking a restore off ($excel)"; done
-gen cry7 crystal=1 recipes=crystal savecodes="$N/crycodes1.txt" >/dev/null
+gen cry7 crystal=1 shard=0 recipes=crystal savecodes="$N/crycodes1.txt" >/dev/null
 gen cry7r recipes=crystal 2>&1 | grep -c "names the crystal" | grep -q "^12$" && echo "  crystal off: the six recipes that name it are left out (and said so) in both table sets" || bad "recipes naming a crystal that is off"
 CODE="$(sed -n 's/^\*crystal=//p' "$N/crycodes1.txt")"
 [ -n "$CODE" ] && [ "$(awk -F'\t' -v c="$CODE" '$1 ~ /Elite Unique Weapon -> Exalted/ {n += ($13 == c && $11 == 2)} END {print n + 0}' "$N/cry7/global/excel/cubemain.txt")" = "1" ] \
 	&& echo "  the word crystal in an upgrade recipe becomes its item code ($CODE)" || bad "crystal as an upgrade material"
 sed "s/^\*crystal=.*/*crystal=zz8/" "$N/crycodes1.txt" > "$N/crycodes_keep.txt"
-gen cry8 crystal=1 codes="$N/crycodes_keep.txt" | grep -q "crystal='zz8'" && echo "  the crystal keeps a saved code" || bad "the crystal's saved code was not kept"
+gen cry8 crystal=1 shard=0 codes="$N/crycodes_keep.txt" | grep -q "crystal='zz8'" && echo "  the crystal keeps a saved code" || bad "the crystal's saved code was not kept"
 # Another mod adds a stat: the marker must keep its number.
 P="$N/modplus"
 rm -rf "$P" && mkdir -p "$P/global/excel"
@@ -170,10 +170,30 @@ last = [l for l in lines if l][-1].split(b"\t")
 last[0] = b"another_mods_stat"
 open(sys.argv[2], "wb").write(data.rstrip(b"\r\n") + eol + b"\t".join(last) + eol)
 PY
-rm -rf "$N/cry9" && "$N/gen_test" "$P" "$VAN" "$N/cry9" crystal=1 >/dev/null
+rm -rf "$N/cry9" && "$N/gen_test" "$P" "$VAN" "$N/cry9" crystal=1 shard=0 >/dev/null
 [ "$(awk -F'\t' '$1 == "xlt_restored" {print NR - 2}' "$N/cry9/global/excel/itemstatcost.txt")" = "500" ] && [ "$(awk -F'\t' '$1 == "xlt_restored" {print NR - 2}' "$N/cry1/global/excel/itemstatcost.txt")" = "500" ] \
 	&& grep -q "another_mods_stat" "$N/cry9/global/excel/itemstatcost.txt" && echo "  another mod's new stat does not move the marker: still stat number 500" || bad "the marker stat moved"
 rm -rf "$P" # (links to the mod's own tables: not output, and not to be mistaken for it)
+
+note "Shard of Desecration: a second item made like the crystal; both stash slots"
+gen sh1 crystal=1 savecodes="$N/shcodes.txt" | tail -3 | grep -q "ok=1" || bad "generator run with the shard"
+python3 test/check_shard.py "$MOD" "$N/cry1" "$N/sh1" "$N/shcodes.txt" | sed 's/^/  /'
+python3 test/check_shard.py "$MOD" "$N/cry1" "$N/sh1" "$N/shcodes.txt" >/dev/null || bad "shard checks"
+LAY=global/ui/layouts
+SHARDCODE="$(sed -n 's/^\*desecration=//p' "$N/shcodes.txt")"; CRYSTALCODE="$(sed -n 's/^\*crystal=//p' "$N/shcodes.txt")"
+for layout in "$LAY/bankexpansionlayouthd.json" "$LAY/controller/bankexpansionlayouthd.json"; do
+	if [ -f "$MOD/$layout" ]; then
+		python3 test/check_slot.py "$MOD/$layout" "$N/sh1/$layout" "$CRYSTALCODE,$SHARDCODE" place=400:300,300:300 beside | sed 's/^/  mod layout: /'
+		python3 test/check_slot.py "$MOD/$layout" "$N/sh1/$layout" "$CRYSTALCODE,$SHARDCODE" place=400:300,300:300 beside >/dev/null 2>&1 || bad "the two stash slots in the mod's $layout"
+	fi
+done
+gen sh5 crystal=1 >/dev/null; diff -r "$N/sh1" "$N/sh5" >/dev/null && echo "  two runs identical" || bad "two runs with the shard differ"
+
+gen sh2 crystal=1 sharddrop=0 >/dev/null
+python3 test/check_shard.py "$MOD" "$N/cry1" "$N/sh2" "" drop=0 >/dev/null && echo "  shard drop weight 0: no loot row carries it" || bad "shard drop weight 0"
+gen sh3 crystal=1 downgrade=r01 >/dev/null
+python3 test/check_shard.py "$MOD" "$N/cry1" "$N/sh3" "" downgrade=r01 >/dev/null && echo "  another downgrade material: the shard is still made, the recipe uses the material named" || bad "downgrade material"
+gen sh4 shard=1 > "$N/sh4.log" 2>&1; grep -q "Shard of Desecration '[a-z0-9]*', listed in 43 boss loot rows" "$N/sh4.log" && [ "$(grep -c "stash slot for the Shard of Desecration at" "$N/sh4.log")" = 2 ] && ! grep -q "Restoration Crystal" "$N/sh4.log" && echo "  the shard without the crystal: made, dropped and stacked on its own" || bad "shard without the crystal"
 
 note "tier choice against one merged list"
 gen pick picktest=40000 | grep "pick test" | sed 's/^/  /' | grep -q " ok" && gen pick picktest=40000 | grep "pick test" | sed 's/^/  /' || bad "tier choice"

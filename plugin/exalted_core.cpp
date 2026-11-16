@@ -877,6 +877,8 @@ struct Bank {
 	Table       cube, treasure;                                             // adjusted and written
 	Table       miscTable, stats, props; // misc.txt, itemstatcost.txt, properties.txt: loaded (and written) only for the crystal
 	std::string crystalCode;             // "" = this bank has no crystal
+	std::string desecrationCode;         // "" = this bank has no Shard of Desecration
+	int         desecrationRows = 0;
 	bool        marker        = false;   // the "restored" stat is in this bank's tables
 	std::map<std::string, std::string> rollTwin; // restore property -> its twin that also writes the roll down
 	int         restoresAdded = 0;
@@ -1108,14 +1110,19 @@ std::vector<std::string> SplitMaterials(const std::string& text) {
 // The word "crystal" in a list of materials stands for the Restoration Crystal, whose item
 // code is only known here ("crystal,qty=2" works too). False when the list names the crystal
 // and this bank has none.
-bool ResolveCrystal(std::vector<std::string>& materials, const std::string& crystalCode) {
-	const size_t length = strlen(kCrystalWord);
+// The word "desecration" stands for the Shard of Desecration in the same way.
+bool ResolveCrystal(std::vector<std::string>& materials, const Bank& bank) {
+	const std::pair<const char*, const std::string*> words[] = { { kCrystalWord, &bank.crystalCode }, { kDesecrationWord, &bank.desecrationCode } };
 	for (std::string& material : materials) {
-		if (material.compare(0, length, kCrystalWord) == 0 && (material.size() == length || material[length] == ',')) {
-			if (crystalCode.empty()) {
-				return false;
+		for (const auto& word : words) {
+			const size_t length = strlen(word.first);
+			if (material.compare(0, length, word.first) == 0 && (material.size() == length || material[length] == ',')) {
+				if (word.second->empty()) {
+					return false;
+				}
+				material = *word.second + material.substr(length);
+				break;
 			}
-			material = crystalCode + material.substr(length);
 		}
 	}
 	return true;
@@ -1134,8 +1141,8 @@ void AddDowngrades(Io& io, Bank& bank, const Config& config, const std::map<std:
 	if (!t.loaded || materials.empty()) {
 		return;
 	}
-	if (!ResolveCrystal(materials, bank.crystalCode)) {
-		Logf(io, "%srecipe 'downgrade' ignored: it names the crystal, which is turned off or could not be made", bank.dir.c_str());
+	if (!ResolveCrystal(materials, bank)) {
+		Logf(io, "%srecipe 'downgrade' ignored: it names the crystal or the Shard of Desecration, which is turned off or could not be made", bank.dir.c_str());
 		return;
 	}
 	const int cDesc = t.Col("description"), cEnabled = t.Col("enabled"), cVersion = t.Col("version"), cNum = t.Col("numinputs"), cOut = t.Col("output"), cInput = t.Col("input 1");
@@ -1223,8 +1230,8 @@ void AddRecipes(Io& io, Bank& bank, const Config& config) {
 			Logf(io, "recipe '%s' ignored: it needs 1 to 6 materials", recipe.key.c_str());
 			continue;
 		}
-		if (!ResolveCrystal(materials, bank.crystalCode)) {
-			Logf(io, "%srecipe '%s' ignored: it names the crystal, which is turned off or could not be made", bank.dir.c_str(), recipe.key.c_str());
+		if (!ResolveCrystal(materials, bank)) {
+			Logf(io, "%srecipe '%s' ignored: it names the crystal or the Shard of Desecration, which is turned off or could not be made", bank.dir.c_str(), recipe.key.c_str());
 			continue;
 		}
 		std::vector<std::string> row    = t.NewRow();
@@ -1802,6 +1809,10 @@ void ExtendLadders(Io& io, Bank& bank, const Config& config) {
 const char* const kCrystalTemplates[] = { "xa1", "tes" }; // Western Worldstone Shard; where the tables have none, an essence
 const char* const kEssences[]         = { "tes", "ceh", "bet", "fed" };
 const char* const kCrystalAsset       = "xlt_restoration_crystal";
+const char* const kDesecrationAsset   = "xlt_shard_of_desecration";
+const char* const kDesecrationString  = "xlt_desecration";
+const double      kCrystalHue[3]      = { 0.62, 0.22, 1.0 };  // purple
+const double      kDesecrationHue[3]  = { 1.0, 0.13, 0.11 };  // red
 const char* const kCrystalString      = "xlt_crystal";
 const char* const kRestoredStat       = "xlt_restored";
 const char* const kRestoredProperty   = kRestoredPropertyCode;
@@ -1828,17 +1839,17 @@ int CrystalTemplate(const Table& t) {
 	return -1;
 }
 
-void AddCrystal(Io& io, Bank& bank, const std::string& code, const std::string& nameKey, bool stashSlot) {
+void AddCrystal(Io& io, Bank& bank, const std::string& code, const std::string& nameKey, bool stashSlot, const char* rowName, std::string& bankCode) {
 	Table&    t     = bank.miscTable;
 	const int cName = t.Col("name"), cCode = t.Col("code"), cNameStr = t.Col("namestr");
 	const int from  = CrystalTemplate(t);
 	if (code.empty() || cName < 0 || cNameStr < 0 || from < 0) {
-		Logf(io, "%smisc.txt: no Worldstone Shard or essence row to build the crystal from; this set of tables gets no crystal", bank.dir.c_str());
+		Logf(io, "%smisc.txt: no Worldstone Shard or essence row to build the %s from; this set of tables gets none", bank.dir.c_str(), rowName);
 		return;
 	}
 	std::vector<std::string> row      = t.rows[static_cast<size_t>(from)];
 	const std::string        fromCode = t.Get(row, cCode);
-	t.Set(row, cName, std::string(kRowMarker) + "Restoration Crystal");
+	t.Set(row, cName, std::string(kRowMarker) + rowName);
 	t.Set(row, cCode, code);
 	if (!nameKey.empty()) {
 		t.Set(row, cNameStr, nameKey);
@@ -1858,7 +1869,7 @@ void AddCrystal(Io& io, Bank& bank, const std::string& code, const std::string& 
 		t.Set(row, t.Col("AdvancedStashStackable"), "1");
 	}
 	t.rows.push_back(std::move(row));
-	bank.crystalCode = code;
+	bankCode = code;
 }
 
 // The stat and the property a restored item is marked with. See kRestoredStatId for why the
@@ -1989,7 +2000,7 @@ void AddRestores(Io& io, Bank& bank, const Config& config, const std::map<std::s
 		Logf(io, "%srestoring is off: it needs 1 to 6 materials", bank.dir.c_str());
 		return;
 	}
-	if (!ResolveCrystal(materials, bank.crystalCode)) {
+	if (!ResolveCrystal(materials, bank)) {
 		if (config.crystalEnabled) { // (turned off in the settings, restoring goes with it and needs no line)
 			Logf(io, "%srestoring is off: its material is the crystal, which could not be made", bank.dir.c_str());
 		}
@@ -2093,10 +2104,10 @@ const char* const kMonsterHellRows[]     = { "TreasureClass(H)",           "Trea
 	                                         "TreasureClassDesecrated(H)", "TreasureClassDesecratedChamp(H)", "TreasureClassDesecratedUnique(H)" };
 const char* const kSuperUniqueHellRows[] = { "TC(H)", "TC(H) Desecrated" };
 
-void AddCrystalDrops(Io& io, Bank& bank, const Config& config) {
+void AddMaterialDrops(Io& io, Bank& bank, const std::string& materialCode, int dropPercent, int& rowsAdded) {
 	Table& t = bank.treasure;
 	TcCols c {};
-	if (bank.crystalCode.empty() || config.crystalDropPercent <= 0 || !t.loaded || !BindTc(t, c)) {
+	if (materialCode.empty() || dropPercent <= 0 || !t.loaded || !BindTc(t, c)) {
 		return;
 	}
 	const int cNoDrop = t.Col("NoDrop");
@@ -2116,19 +2127,19 @@ void AddCrystalDrops(Io& io, Bank& bank, const Config& config) {
 			if (cell.empty()) {
 				continue;
 			}
-			if (EntryName(cell, false) == bank.crystalCode) {
+			if (EntryName(cell, false) == materialCode) {
 				return false;
 			}
 			last = i;
 		}
 		const int slot = last + 1;
 		if (slot >= 10 || c.item[slot] < 0 || c.prob[slot] < 0) {
-			Logf(io, "%sloot row '%s' has no room left for the crystal", bank.dir.c_str(), t.Get(row, c.name).c_str());
+			Logf(io, "%sloot row '%s' has no room left for one more boss material", bank.dir.c_str(), t.Get(row, c.name).c_str());
 			return false;
 		}
-		t.Set(row, c.item[slot], bank.crystalCode);
+		t.Set(row, c.item[slot], materialCode);
 		t.Set(row, c.prob[slot], std::to_string(std::max(1, weight)));
-		++bank.crystalRows;
+		++rowsAdded;
 		return true;
 	};
 
@@ -2147,7 +2158,7 @@ void AddCrystalDrops(Io& io, Bank& bank, const Config& config) {
 		if (weight <= 0) {
 			continue;
 		}
-		weight = std::max(1, (weight * config.crystalDropPercent + 50) / 100);
+		weight = std::max(1, (weight * dropPercent + 50) / 100);
 		if (shareTotal == 0) {
 			shareWeight = weight;
 			shareTotal  = total(row);
@@ -2247,12 +2258,11 @@ void AddCrystalDrops(Io& io, Bank& bank, const Config& config) {
 // then one red/green/blue/alpha byte quartet per pixel. Each pixel keeps its brightness and its
 // alpha and takes the purple hue; grey pixels are given colour too. False when the data is not
 // such a sprite (it is then left alone).
-bool TintSprite(std::string& data) {
+bool TintSprite(std::string& data, const double* hue) {
 	constexpr size_t kHeader = 40;
 	if (data.size() <= kHeader || (data.size() - kHeader) % 4 != 0 || Lower(data.substr(0, 4)) != "spa1") {
 		return false;
 	}
-	static const double purple[3] = { 0.62, 0.22, 1.0 };
 	for (size_t i = kHeader; i + 3 < data.size(); i += 4) {
 		const int r = static_cast<unsigned char>(data[i]), g = static_cast<unsigned char>(data[i + 1]), b = static_cast<unsigned char>(data[i + 2]);
 		if (data[i + 3] == 0) {
@@ -2261,7 +2271,7 @@ bool TintSprite(std::string& data) {
 		const int    high   = std::max({ r, g, b }), low = std::min({ r, g, b });
 		const double colour = 0.6 + 0.4 * (high > 0 ? static_cast<double>(high - low) / high : 0.0);
 		for (int k = 0; k < 3; ++k) {
-			data[i + static_cast<size_t>(k)] = static_cast<char>(std::min(255, static_cast<int>(high * (1.0 - colour + colour * purple[k]) + 0.5)));
+			data[i + static_cast<size_t>(k)] = static_cast<char>(std::min(255, static_cast<int>(high * (1.0 - colour + colour * hue[k]) + 0.5)));
 		}
 	}
 	return true;
@@ -2415,7 +2425,7 @@ bool CopyInSprite(std::string& sprite, int x0, int y0, int x1, int y1, int toX, 
 
 // Gives the layout widget `widget` (raw text of a JSON object), or the first widget below it
 // that holds a slot for one of the crystal's model items, a slot for `code`.
-SlotResult AddStashSlot(std::string& widget, const std::string& code, SlotRect& placed, const FrameMaker& frame, int depth = 0) {
+SlotResult AddStashSlot(std::string& widget, const std::string& code, SlotRect& placed, const FrameMaker& frame, int right, int down, int depth = 0) {
 	std::string_view rawChildren;
 	if (depth > 16 || !ObjectValue(widget, "children", rawChildren) || rawChildren.empty()) {
 		return SlotResult::None;
@@ -2451,7 +2461,38 @@ SlotResult AddStashSlot(std::string& widget, const std::string& code, SlotRect& 
 		}
 	}
 	if (model >= 0) {
-		if (!FreeSlotPlace(slots, modelRect, placed)) {
+		// The place asked for: so many slots to the right of and below the model slot, counted
+		// in the distance the model's own neighbours stand at. Taken, or not asked for: a free
+		// place near the model.
+		bool asked = false;
+		if (right != 0 || down != 0) {
+			int stepX = 0, stepY = 0;
+			for (const SlotRect& slot : slots) {
+				const int dx = slot.x - modelRect.x, dy = slot.y - modelRect.y;
+				if (std::abs(dy) <= 8 && dx > 0 && (stepX == 0 || dx < stepX)) {
+					stepX = dx;
+				}
+				if (std::abs(dx) <= 8 && dy > 0 && (stepY == 0 || dy < stepY)) {
+					stepY = dy;
+				}
+			}
+			const SlotRect wish { modelRect.x + right * stepX, modelRect.y + down * stepY, modelRect.w, modelRect.h };
+			asked = (right == 0 || stepX > 0) && (down == 0 || stepY > 0);
+			// It has to be free, and to join the slots that are there: one of them right beside,
+			// above or below it. (In a layout built differently the counted place can be far
+			// off; there the place is found instead.)
+			bool joined = false;
+			for (const SlotRect& slot : slots) {
+				asked = asked && !(wish.x < slot.x + slot.w && slot.x < wish.x + wish.w && wish.y < slot.y + slot.h && slot.y < wish.y + wish.h);
+				const int gapX = std::max(slot.x - (wish.x + wish.w), wish.x - (slot.x + slot.w)), gapY = std::max(slot.y - (wish.y + wish.h), wish.y - (slot.y + slot.h));
+				joined = joined || (std::abs(slot.y - wish.y) <= 8 && gapX >= 0 && gapX <= 12) || (std::abs(slot.x - wish.x) <= 8 && gapY >= 0 && gapY <= 12);
+			}
+			asked = asked && joined;
+			if (asked) {
+				placed = wish;
+			}
+		}
+		if (!asked && !FreeSlotPlace(slots, modelRect, placed)) {
 			return SlotResult::NoRoom;
 		}
 		std::string_view  rawName;
@@ -2475,7 +2516,7 @@ SlotResult AddStashSlot(std::string& widget, const std::string& code, SlotRect& 
 		return SlotResult::Added;
 	}
 	for (std::string& child : children.elements) {
-		const SlotResult result = AddStashSlot(child, code, placed, frame, depth + 1);
+		const SlotResult result = AddStashSlot(child, code, placed, frame, right, down, depth + 1);
 		if (result == SlotResult::Added) {
 			widget.replace(at, length, children.Serialize());
 		}
@@ -2540,7 +2581,7 @@ Summary Run(Io& io, const Config& settings) {
 		bank.monStats  = LoadRoTable(io, bank.dir, "monstats.txt");
 		bank.superUniques = LoadRoTable(io, bank.dir, "superuniques.txt");
 		bank.index     = dir == kBanks[0] ? 0 : 1;
-		if (config.enabled && config.crystalEnabled) {
+		if (config.enabled && (config.crystalEnabled || config.desecrationEnabled)) {
 			bank.miscTable = LoadTable(io, bank.dir, "misc.txt");
 			bank.stats     = LoadTable(io, bank.dir, "itemstatcost.txt");
 			bank.props     = LoadTable(io, bank.dir, "properties.txt");
@@ -2575,7 +2616,7 @@ Summary Run(Io& io, const Config& settings) {
 
 	std::map<std::string, std::string> codes;    // elite code -> exalted code
 	std::map<std::string, std::string> nameKeys; // elite code -> string key of the exalted name
-	std::string crystalCode, crystalNameKey;
+	std::string crystalCode, crystalNameKey, desecrationCode, desecrationNameKey;
 	std::vector<std::pair<std::string, std::string>> extraFiles; // adjusted files that are not tables: the crystal's picture and model
 	std::vector<std::string> keptFiles;                          // the same, already stored by an earlier start
 
@@ -2622,23 +2663,31 @@ Summary Run(Io& io, const Config& settings) {
 		}
 		// The crystal's code is kept the same way. Only a set of tables that has a row to build
 		// it from gets one (see AddCrystal).
-		bool wantCrystal = false;
+		bool haveTemplate = false;
 		for (const Bank& bank : banks) {
-			wantCrystal = wantCrystal || CrystalTemplate(bank.miscTable) >= 0;
+			haveTemplate = haveTemplate || CrystalTemplate(bank.miscTable) >= 0;
 		}
-		if (wantCrystal) {
-			const auto found = saved.find(kCrystalKey);
+		const bool wantCrystal = haveTemplate && config.crystalEnabled, wantDesecration = haveTemplate && config.desecrationEnabled;
+		const auto keepCode = [&](const char* key, const char* label, std::string& out) {
+			const auto found = saved.find(key);
 			if (found != saved.end()) {
 				const std::string& code  = found->second;
 				const bool         valid = code.size() == 3 && std::all_of(code.begin(), code.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z'); });
 				if (valid && taken.insert(code).second) {
-					crystalCode = code;
+					out = code;
 				} else {
-					Logf(io, "the Restoration Crystal cannot keep its code '%s' (another item uses it now). It gets a new code; crystals saved with the old one are lost.", code.c_str());
+					Logf(io, "the %s cannot keep its code '%s' (another item uses it now). It gets a new code; ones saved with the old code are lost.", label, code.c_str());
 				}
 			}
-		} else if (config.crystalEnabled) {
-			io.Log("misc.txt has no Worldstone Shard or essence row to build the Restoration Crystal from: there is no crystal");
+		};
+		if (wantCrystal) {
+			keepCode(kCrystalKey, "Restoration Crystal", crystalCode);
+		}
+		if (wantDesecration) {
+			keepCode(kDesecrationKey, "Shard of Desecration", desecrationCode);
+		}
+		if (!haveTemplate && (config.crystalEnabled || config.desecrationEnabled)) {
+			io.Log("misc.txt has no Worldstone Shard or essence row to build the Restoration Crystal and the Shard of Desecration from: there is neither");
 		}
 		// A base that is not in the mod right now keeps its code too: nothing else may take it.
 		for (const auto& entry : saved) {
@@ -2656,6 +2705,13 @@ Summary Run(Io& io, const Config& settings) {
 			}
 			summary.codes.emplace_back(kCrystalKey, crystalCode);
 			summary.crystalCode = crystalCode;
+		}
+		if (wantDesecration) {
+			if (desecrationCode.empty()) {
+				desecrationCode = MakeCode("shard of desecration", taken);
+			}
+			summary.codes.emplace_back(kDesecrationKey, desecrationCode);
+			summary.desecrationCode = desecrationCode;
 		}
 		summary.bases = static_cast<int>(codes.size());
 
@@ -2718,7 +2774,7 @@ Summary Run(Io& io, const Config& settings) {
 				++summary.names;
 			}
 			// The crystal's name, and the line a restored item shows: the same text in every language.
-			if (!crystalCode.empty() && !names.array.elements.empty()) {
+			if ((!crystalCode.empty() || !desecrationCode.empty()) && !names.array.elements.empty()) {
 				const auto        shard    = byKey.find(kCrystalTemplates[0]);
 				const std::string pattern  = names.array.elements[shard != byKey.end() ? shard->second : 0];
 				auto              addString = [&](const char* key, const std::string& text) {
@@ -2742,11 +2798,14 @@ Summary Run(Io& io, const Config& settings) {
 					names.array.elements.push_back(object + "}");
 					return true;
 				};
-				const std::string colour = config.crystalColor != 0 ? std::string("\xC3\xBF" "c") + config.crystalColor : std::string();
-				if (addString(kCrystalString, colour + config.crystalName)) {
+				const auto colourOf = [](char code) { return code != 0 ? std::string("\xC3\xBF" "c") + code : std::string(); };
+				if (!crystalCode.empty() && addString(kCrystalString, colourOf(config.crystalColor) + config.crystalName)) {
 					crystalNameKey = kCrystalString;
 				}
-				if (config.restoreEnabled && config.restoreShowLine) {
+				if (!desecrationCode.empty() && addString(kDesecrationString, colourOf(config.desecrationColor) + config.desecrationName)) {
+					desecrationNameKey = kDesecrationString;
+				}
+				if (!crystalCode.empty() && config.restoreEnabled && config.restoreShowLine) {
 					addString(kRestoredString, "Restored");
 				}
 			}
@@ -2774,10 +2833,22 @@ Summary Run(Io& io, const Config& settings) {
 			// shard's own model. When any of that cannot be read it simply shares the shard's look.
 			std::string_view rawAsset;
 			const auto       shard = byCode.find(kCrystalTemplates[0]);
-			if (!crystalCode.empty() && byCode.count(crystalCode) == 0 && shard != byCode.end() && ObjectValue(shard->second, "asset", rawAsset)) {
+			struct Look {
+				const std::string* code;
+				const char*        assetName;
+				const double*      hue;
+				const char*        label;
+				bool*              tintedOut;
+			};
+			const Look looks[] = { { &crystalCode, kCrystalAsset, kCrystalHue, "Restoration Crystal", &summary.crystalTinted },
+				                   { &desecrationCode, kDesecrationAsset, kDesecrationHue, "Shard of Desecration", &summary.desecrationTinted } };
+			for (const Look& look : looks) {
+				if (look.code->empty() || byCode.count(*look.code) != 0 || shard == byCode.end() || !ObjectValue(shard->second, "asset", rawAsset)) {
+					continue;
+				}
 				const std::string asset(UnquoteView(rawAsset));
 				const size_t      slash = asset.rfind('/');
-				const std::string own   = (slash != std::string::npos ? asset.substr(0, slash + 1) : std::string()) + kCrystalAsset;
+				const std::string own   = (slash != std::string::npos ? asset.substr(0, slash + 1) : std::string()) + look.assetName;
 				const std::string files[3][2] = { { std::string(kMiscSprites) + asset + ".sprite", std::string(kMiscSprites) + own + ".sprite" },
 					                              { std::string(kMiscModels) + asset + ".json", std::string(kMiscModels) + own + ".json" },
 					                              { std::string(kMiscSprites) + asset + ".lowend.sprite", std::string(kMiscSprites) + own + ".lowend.sprite" } };
@@ -2792,62 +2863,167 @@ Summary Run(Io& io, const Config& settings) {
 					}
 				} else {
 					std::string picture, model, small;
-					if (ReadAny(io, files[0][0], picture) && TintSprite(picture) && ReadAny(io, files[1][0], model) && !model.empty()) {
+					if (ReadAny(io, files[0][0], picture) && TintSprite(picture, look.hue) && ReadAny(io, files[1][0], model) && !model.empty()) {
 						tinted = true;
 						extraFiles.emplace_back(files[0][1], std::move(picture));
 						extraFiles.emplace_back(files[1][1], std::move(model));
-						if (ReadAny(io, files[2][0], small) && TintSprite(small)) {
+						if (ReadAny(io, files[2][0], small) && TintSprite(small, look.hue)) {
 							extraFiles.emplace_back(files[2][1], std::move(small));
 						}
 					} else {
-						io.Log("the Worldstone Shard's picture could not be read: the Restoration Crystal looks like that shard, untinted");
+						Logf(io, "the Worldstone Shard's picture could not be read: the %s looks like that shard, untinted", look.label);
 					}
 				}
-				models.array.elements.push_back("{\"" + crystalCode + "\":{\"asset\":\"" + (tinted ? own : asset) + "\"}}");
-				summary.crystalTinted = tinted;
+				models.array.elements.push_back("{\"" + *look.code + "\":{\"asset\":\"" + (tinted ? own : asset) + "\"}}");
+				*look.tintedOut = tinted;
 			}
 		} else {
 			io.Log("hd/items/items.json could not be read: exalted bases may have no model on the ground");
 		}
 
-		// The crystal's slot in the stash's stacking tabs, in the layout for mouse and keyboard
-		// and in the one for a controller.
+		// The slots of the crystal and the Shard of Desecration in the stash's stacking tabs, in
+		// the layout for mouse and keyboard and in the one for a controller.
+		struct SlotWish {
+			const std::string* code;
+			const char*        label;
+			int                right, down;
+			int*               slots;
+		};
+		std::vector<SlotWish> wishes;
 		if (!crystalCode.empty() && config.crystalStashSlot) {
-			for (const char* rel : kStashLayouts) {
-				std::string text;
-				if (!ReadAny(io, rel, text) || text.empty()) {
-					Logf(io, "%s could not be read: no stash slot for the Restoration Crystal there", rel);
-					continue;
+			wishes.push_back({ &crystalCode, "Restoration Crystal", config.crystalSlotRight, config.crystalSlotDown, &summary.crystalSlots });
+		}
+		if (!desecrationCode.empty() && config.desecrationStashSlot) {
+			wishes.push_back({ &desecrationCode, "Shard of Desecration", config.desecrationSlotRight, config.desecrationSlotDown, &summary.desecrationSlots });
+		}
+		for (const char* rel : kStashLayouts) {
+			if (wishes.empty()) {
+				break;
+			}
+			std::string text;
+			if (!ReadAny(io, rel, text) || text.empty()) {
+				Logf(io, "%s could not be read: no stash slots for the crystal and the shard there", rel);
+				continue;
+			}
+			const size_t bom  = text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF ? 3 : 0;
+			std::string  body = text.substr(bom);
+			struct Placed {
+				std::string container;
+				SlotRect    model, place;
+				const char* label;
+			};
+			std::vector<Placed> placed;
+			for (const SlotWish& wish : wishes) {
+				Placed           one;
+				one.label = wish.label;
+				const FrameMaker note = [&](const std::string& container, const SlotRect& model, const SlotRect&) -> std::string {
+					one.container = container;
+					one.model     = model;
+					return {};
+				};
+				switch (AddStashSlot(body, *wish.code, one.place, note, wish.right, wish.down)) {
+				case SlotResult::Added:
+					++*wish.slots;
+					placed.push_back(one);
+					break;
+				case SlotResult::Present:
+					++*wish.slots;
+					Logf(io, "%s: already has a stash slot for the %s; left as it is", rel, wish.label);
+					break;
+				case SlotResult::NoRoom:
+					Logf(io, "%s: no free place beside the Worldstone Shards' slots: no stash slot for the %s there", rel, wish.label);
+					break;
+				default:
+					Logf(io, "%s: no slot of a Worldstone Shard or essence found: no stash slot for the %s there", rel, wish.label);
+					break;
 				}
-				const size_t bom  = text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF ? 3 : 0;
-				std::string  body = text.substr(bom);
-				SlotRect     place;
-				bool         framed = false;
-				// The frame around the slot. The game's slots have theirs painted into the stash
-				// background, so the new slot gets a picture of its own behind it: the frame of
-				// the slot it is modelled on, cut out of that background.
-				const FrameMaker frame = [&](const std::string& container, const SlotRect& model, const SlotRect& placed) -> std::string {
-					// Which background the container is shown on, and where that picture's corner is.
+			}
+			if (placed.empty()) {
+				continue;
+			}
+			const std::string layout = text.substr(0, bom) + body;
+			// The frames. The game's slots have theirs painted into the stash background, and a
+			// picture widget beside the slots is not possible (the game takes every widget in
+			// that container for a slot and fails on anything else). So each new slot's frame is
+			// painted into a copy of the background: the frame of the slot it is modelled on.
+			// The stored copies stay as they are while the stored layout says the same places.
+			std::string stored;
+			const bool  samePlaces = io.ReadCopy(rel, stored) && stored == layout;
+			// Which background a container is shown on, and where that picture's corner is.
+			const auto backgroundOf = [&](const std::string& container, std::string& background, int& backX, int& backY) -> bool {
+				const auto inner = [&]() -> std::string {
 					static const char* const kContainers[] = { "advancedstash_gems", "advancedstash_materials", "advancedstash_runes" };
-					int                      tab           = -1;
-					for (int i = 0; i < 3; ++i) {
-						tab = container == kContainers[i] ? i + 2 : tab;
-					}
-					std::string_view rawFields, rawFiles;
-					JsonArray        files;
-					if (tab < 0 || !ObjectValue(body, "fields", rawFields) || rawFields.empty()) {
-						return {};
-					}
-					const std::string panelFields(rawFields);
-					if (!ObjectValue(panelFields, "backgroundFile", rawFiles) || rawFiles.empty()) {
-						return {};
-					}
-					files.Parse(std::string(rawFiles));
-					if (!files.valid || files.elements.size() <= static_cast<size_t>(tab)) {
-						return {};
-					}
-					const std::string background(UnquoteView(files.elements[static_cast<size_t>(tab)])); // as written: "PANEL\\Stash\\Name" or "Controller/Panel/Stash/V2/Name"
-					const auto        asPath  = [](std::string name) {
+						int                      tab           = -1;
+						for (int i = 0; i < 3; ++i) {
+							tab = container == kContainers[i] ? i + 2 : tab;
+						}
+						std::string_view rawFields, rawFiles;
+						JsonArray        files;
+						if (tab < 0 || !ObjectValue(body, "fields", rawFields) || rawFields.empty()) {
+							return {};
+						}
+						const std::string panelFields(rawFields);
+						if (!ObjectValue(panelFields, "backgroundFile", rawFiles) || rawFiles.empty()) {
+							return {};
+						}
+						files.Parse(std::string(rawFiles));
+						if (!files.valid || files.elements.size() <= static_cast<size_t>(tab)) {
+							return {};
+						}
+						background = std::string(UnquoteView(files.elements[static_cast<size_t>(tab)])); // as written: "PANEL\\Stash\\Name" or "Controller/Panel/Stash/V2/Name"
+						// The background widget's place: in this layout, or in the one it is based on.
+						backX = 0;
+						backY = 0;
+						bool known = false;
+						const auto backgroundPlace = [&](const std::string& layout) {
+							std::string_view rawChildren;
+							JsonArray        children;
+							if (!ObjectValue(layout, "children", rawChildren) || rawChildren.empty()) {
+								return;
+							}
+							children.Parse(std::string(rawChildren));
+							for (const std::string& child : children.elements) {
+								std::string_view name, fields, rect;
+								if (!ObjectValue(child, "name", name) || UnquoteView(name) != "background" || !ObjectValue(child, "fields", fields) || fields.empty()) {
+									continue;
+								}
+								const std::string fieldText(fields);
+								if (ObjectValue(fieldText, "rect", rect) && !rect.empty() && rect.front() == '{') {
+									std::vector<Member> members;
+									ObjectMembers(std::string(rect), members);
+									for (const Member& member : members) {
+										if (member.key == "x") {
+											backX = ToInt(member.value);
+										} else if (member.key == "y") {
+											backY = ToInt(member.value);
+										}
+									}
+									known = true;
+								}
+							}
+						};
+						backgroundPlace(body);
+						if (!known) {
+							std::string_view rawBase;
+							std::string      baseText;
+							if (ObjectValue(body, "basedOn", rawBase) && !rawBase.empty() && ReadAny(io, std::string("global/ui/layouts/") + Lower(std::string(UnquoteView(rawBase))), baseText)) {
+								backgroundPlace(baseText.substr(baseText.size() >= 3 && static_cast<unsigned char>(baseText[0]) == 0xEF ? 3 : 0));
+							}
+						}
+						if (!known) {
+							return {};
+						}
+					return background;
+				};
+				return !inner().empty() && !background.empty();
+			};
+			std::set<std::string> painted;
+			for (const Placed& first : placed) {
+				std::string background;
+				int         backX = 0, backY = 0;
+				bool        framed = false;
+				if (backgroundOf(first.container, background, backX, backY)) {
+					const auto asPath = [](const std::string& name) {
 						std::string path;
 						for (size_t i = 0; i < name.size(); ++i) {
 							if (name[i] == '\\') {
@@ -2859,98 +3035,55 @@ Summary Run(Io& io, const Config& settings) {
 						}
 						return std::string("hd/global/ui/") + Lower(path);
 					};
-					// The background widget's place: in this layout, or in the one it is based on.
-					int  backX = 0, backY = 0;
-					bool known = false;
-					const auto backgroundPlace = [&](const std::string& layout) {
-						std::string_view rawChildren;
-						JsonArray        children;
-						if (!ObjectValue(layout, "children", rawChildren) || rawChildren.empty()) {
-							return;
-						}
-						children.Parse(std::string(rawChildren));
-						for (const std::string& child : children.elements) {
-							std::string_view name, fields, rect;
-							if (!ObjectValue(child, "name", name) || UnquoteView(name) != "background" || !ObjectValue(child, "fields", fields) || fields.empty()) {
-								continue;
-							}
-							const std::string fieldText(fields);
-							if (ObjectValue(fieldText, "rect", rect) && !rect.empty() && rect.front() == '{') {
-								std::vector<Member> members;
-								ObjectMembers(std::string(rect), members);
-								for (const Member& member : members) {
-									if (member.key == "x") {
-										backX = ToInt(member.value);
-									} else if (member.key == "y") {
-										backY = ToInt(member.value);
-									}
-								}
-								known = true;
-							}
-						}
-					};
-					backgroundPlace(body);
-					if (!known) {
-						std::string_view rawBase;
-						std::string      baseText;
-						if (ObjectValue(body, "basedOn", rawBase) && !rawBase.empty() && ReadAny(io, std::string("global/ui/layouts/") + Lower(std::string(UnquoteView(rawBase))), baseText)) {
-							backgroundPlace(baseText.substr(baseText.size() >= 3 && static_cast<unsigned char>(baseText[0]) == 0xEF ? 3 : 0));
-						}
-					}
-					if (!known) {
-						return {};
-					}
-					// The model slot with its border, on even pixels (the small picture is half the
-					// size). A painted frame starts a pixel or two before the slot's corner and
-					// ends inside the slot's size; the next slot's frame begins right after it.
-					constexpr int kBorder = 2;
-					const int     x0 = (model.x - backX - kBorder) & ~1, y0 = (model.y - backY - kBorder) & ~1;
-					const int     x1 = (model.x - backX + model.w) & ~1, y1 = (model.y - backY + model.h) & ~1;
-					// Painted into a copy of the background, where the game's own frames are. (A
-					// picture widget beside the slots is not possible: the game takes every widget
-					// in that container for a slot and fails on anything else.)
 					const std::string big = asPath(background) + ".sprite", small = asPath(background) + ".lowend.sprite";
-					const int         dx = placed.x - model.x, dy = placed.y - model.y;
-					if (io.HasCopy(big)) {
+					if (painted.count(big) != 0) {
+						framed = true; // done with an earlier slot of the same background
+					} else if (samePlaces && io.HasCopy(big)) {
+						framed = true;
 						keptFiles.push_back(big);
 						if (io.HasCopy(small)) {
 							keptFiles.push_back(small);
 						}
 					} else {
-						std::string picture;
-						if (!ReadAny(io, big, picture) || !CopyInSprite(picture, x0, y0, x1, y1, x0 + dx, y0 + dy)) {
-							return {};
+						std::string picture, half;
+						const bool  haveBig = ReadAny(io, big, picture), haveSmall = haveBig && ReadAny(io, small, half);
+						bool        ok      = haveBig, okSmall = haveSmall;
+						for (const Placed& slot : placed) {
+							std::string other;
+							int         otherX = 0, otherY = 0;
+							if (!backgroundOf(slot.container, other, otherX, otherY) || other != background) {
+								continue;
+							}
+							// The model slot with its border, on even pixels (the small picture is
+							// half the size). A painted frame starts a pixel or two before the
+							// slot's corner and ends inside the slot's size.
+							constexpr int kBorder = 2;
+							const int     x0 = (slot.model.x - backX - kBorder) & ~1, y0 = (slot.model.y - backY - kBorder) & ~1;
+							const int     x1 = (slot.model.x - backX + slot.model.w) & ~1, y1 = (slot.model.y - backY + slot.model.h) & ~1;
+							const int     dx = slot.place.x - slot.model.x, dy = slot.place.y - slot.model.y;
+							ok      = ok && CopyInSprite(picture, x0, y0, x1, y1, x0 + dx, y0 + dy);
+							okSmall = okSmall && CopyInSprite(half, x0 / 2, y0 / 2, x1 / 2, y1 / 2, (x0 + dx) / 2, (y0 + dy) / 2);
 						}
-						extraFiles.emplace_back(big, std::move(picture));
-						if (ReadAny(io, small, picture) && CopyInSprite(picture, x0 / 2, y0 / 2, x1 / 2, y1 / 2, (x0 + dx) / 2, (y0 + dy) / 2)) {
-							extraFiles.emplace_back(small, std::move(picture));
+						if (ok) {
+							framed = true;
+							extraFiles.emplace_back(big, std::move(picture));
+							if (okSmall) {
+								extraFiles.emplace_back(small, std::move(half));
+							}
 						}
 					}
-					framed = true;
-					return {};
-				};
-				switch (AddStashSlot(body, crystalCode, place, frame)) {
-				case SlotResult::Added:
-					extraFiles.emplace_back(rel, text.substr(0, bom) + body);
-					++summary.crystalSlots;
-					Logf(io, "%s: stash slot for the Restoration Crystal at x %d, y %d (%d x %d), %s", rel, place.x, place.y, place.w, place.h,
-					     framed ? "its frame painted into a copy of the stash background" : "without a frame (the stash background could not be read)");
-					break;
-				case SlotResult::Present:
-					++summary.crystalSlots;
-					Logf(io, "%s: already has a stash slot for the Restoration Crystal; left as it is", rel);
-					break;
-				case SlotResult::NoRoom:
-					Logf(io, "%s: no free place beside the Worldstone Shards' slots: no stash slot for the Restoration Crystal there", rel);
-					break;
-				default:
-					Logf(io, "%s: no slot of a Worldstone Shard or essence found: no stash slot for the Restoration Crystal there", rel);
-					break;
+					painted.insert(big);
 				}
+				Logf(io, "%s: stash slot for the %s at x %d, y %d (%d x %d), %s", rel, first.label, first.place.x, first.place.y, first.place.w, first.place.h,
+				     framed ? "its frame painted into a copy of the stash background" : "without a frame (the stash background could not be read)");
 			}
-			if (summary.crystalSlots == 0) {
-				io.Log("the Restoration Crystal has no slot in the stash's stacking tabs: it is kept as an ordinary item");
-			}
+			extraFiles.emplace_back(rel, layout);
+		}
+		if (!crystalCode.empty() && config.crystalStashSlot && summary.crystalSlots == 0) {
+			io.Log("the Restoration Crystal has no slot in the stash's stacking tabs: it is kept as an ordinary item");
+		}
+		if (!desecrationCode.empty() && config.desecrationStashSlot && summary.desecrationSlots == 0) {
+			io.Log("the Shard of Desecration has no slot in the stash's stacking tabs: it is kept as an ordinary item");
 		}
 
 		// 5. Rows, families, recipes and loot rows for each bank.
@@ -2964,8 +3097,11 @@ Summary Run(Io& io, const Config& settings) {
 				(family.sets ? sets : uniques) += 1;
 				summary.families.push_back(family);
 			}
+			if (!desecrationCode.empty()) {
+				AddCrystal(io, bank, desecrationCode, desecrationNameKey, summary.desecrationSlots > 0, "Shard of Desecration", bank.desecrationCode);
+			}
 			if (!crystalCode.empty()) {
-				AddCrystal(io, bank, crystalCode, crystalNameKey, summary.crystalSlots > 0);
+				AddCrystal(io, bank, crystalCode, crystalNameKey, summary.crystalSlots > 0, "Restoration Crystal", bank.crystalCode);
 				if (config.restoreEnabled && !bank.crystalCode.empty()) {
 					AddMarker(io, bank, config);
 				}
@@ -2974,13 +3110,20 @@ Summary Run(Io& io, const Config& settings) {
 			AddDowngrades(io, bank, config, codes);
 			AddRestores(io, bank, config, codes);
 			ExtendLadders(io, bank, config);
-			AddCrystalDrops(io, bank, config);
+			AddMaterialDrops(io, bank, bank.crystalCode, config.crystalDropPercent, bank.crystalRows);
+			AddMaterialDrops(io, bank, bank.desecrationCode, config.desecrationDropPercent, bank.desecrationRows); // beside the crystal, in the same rows
 			summary.restores = std::max(summary.restores, bank.restoresAdded);
 			if (bank.index == 0 || summary.rollStats == 0) {
 				summary.rollStats = static_cast<int>(bank.rollTwin.size());
 			}
 			if (bank.index == 0 || summary.crystalRows == 0) {
 				summary.crystalRows = bank.crystalRows;
+			}
+			if (bank.index == 0 || summary.desecrationRows == 0) {
+				summary.desecrationRows = bank.desecrationRows;
+			}
+			if (!bank.desecrationCode.empty()) {
+				Logf(io, "%s: Shard of Desecration '%s', listed in %d boss loot rows", bank.dir.c_str(), bank.desecrationCode.c_str(), bank.desecrationRows);
 			}
 			if (!bank.crystalCode.empty()) {
 				Logf(io, "%s: Restoration Crystal '%s', %d restore recipes, listed in %d boss loot rows", bank.dir.c_str(), bank.crystalCode.c_str(), bank.restoresAdded, bank.crystalRows);

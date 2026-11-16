@@ -1,8 +1,8 @@
-# Exalted Items: user guide (v0.11.0)
+# Exalted Items: user guide (v0.12.0)
 
 Exalted Items adds a fourth tier of weapons and armor above elite, called Exalted.
 
-v0.11.0 has passed its offline checks but has not been played yet. The Restoration Crystal,
+v0.12.0 has passed its offline checks but has not been played yet. The Restoration Crystal,
 its stash slot, the cube recipes and multiplayer are untested in the game.
 
 ## What it adds
@@ -23,7 +23,7 @@ uniques, sets and the cube recipes work as before.
 **The cube.** An elite item plus a Restoration Crystal becomes the same item on its exalted
 base. This works for unique, set and rare items. The item keeps everything it had.
 
-**Back to elite.** Any exalted item plus an El rune becomes the same item on its elite base.
+**Back to elite.** Any exalted item plus a Shard of Desecration becomes the same item on its elite base.
 This works for plain, magic, rare, set and unique items.
 
 ## The Restoration Crystal
@@ -35,11 +35,11 @@ and Nihlathak. An act boss can drop it about as often as its essence. The other 
 the same chance per drop as Andariel.
 
 **In the stash.** Crystals pile up in the stash's stacking tabs, like runes and Worldstone
-Shards. The crystal has its own slot there, in a free place that continues a row of
-slots near the Western Worldstone Shard. With the stash layout of this mod set that is the
-place left of Diablo's Horn. The slot's frame is painted into a copy of the stash background the first
-time the game starts with it. Take one out to use it in the cube. The size of a pile is the loader's
-`set_materials_limit`.
+Shards. The crystal has its own slot there, placed a set number of slots from the Western
+Worldstone Shard's slot (settings `stash_slot_right` and `stash_slot_down`); with the stash
+layout of this mod set that is the bottom right corner, under Mephisto's Brain. The slot's
+frame is painted into a copy of the stash background. Take one out to use it in the cube. The
+size of a pile is the loader's `set_materials_limit`.
 
 **Restoring.** An exalted item plus a crystal gets every attribute listed for its kind, each
 rolled in its range. It works on any quality, once per item. A restored item says "Restored".
@@ -61,13 +61,22 @@ the item go down by that much. The level requirement does not change.
 An attribute the item already has is added on top. The item cannot be restored a second time
 while it is restored.
 
-**Back to elite takes the restore off.** Turning a restored item back to elite (the El rune
+**Back to elite takes the restore off.** Turning a restored item back to elite (the Shard of Desecration
 recipe) removes exactly what the restore added, and the "Restored" line with it. The item is
 then as it was before the restore, on its elite base, and can be upgraded and restored again.
 The crystal is not given back. This works only for items restored with v0.11.0 or later: a
 restore now writes the amounts it rolled onto the item as hidden values, and older restored
 items have none, so they keep their attributes. It needs the game build the plugin knows; in
 another build the `exalted` console line says so and restored items keep their attributes.
+
+## The Shard of Desecration
+
+A red Worldstone Shard, the counterpart of the crystal: in the cube it turns an exalted item
+back into the same item on its elite base. It replaces the El rune in that recipe.
+
+It drops exactly where the crystal does: from the same bosses in Hell, in the same loot rows,
+with the same chance. It stacks in the stash too. Its slot and the crystal's stand side by
+side, in the row under Baal's Eye and Mephisto's Brain with this mod set's stash.
 
 ## Uniques and sets
 
@@ -92,11 +101,13 @@ game. Changes apply the next time the game starts.
 | `unique_drops`, `set_drops` | `"all"` | Which tiers' uniques and sets can appear: `off`, `normal`, `exceptional`, `elite`, `all` |
 | `name_prefix` | `"Exalted "` | Text in front of the name |
 | `[recipes]` | `"crystal"` | Cube materials for the upgrade. `crystal` is the Restoration Crystal; rune and gem codes work too. `""` turns a recipe off |
-| `downgrade` (in `[recipes]`) | `"r01"` (El) | Material that turns an exalted item back to elite |
+| `downgrade` (in `[recipes]`) | `"desecration"` | Material that turns an exalted item back to elite. `desecration` is the Shard of Desecration; `"r01"` would be the El rune |
 | `[crystal]` `enabled` | `true` | `false`: no crystal. Give the recipes other materials then |
 | `[crystal]` `name` | `"Restoration Crystal"` | Its name |
 | `[crystal]` `name_color` | `"orange"` | Colour of the name. Orange is what the game uses for essences, keys and Worldstone Shards |
 | `[crystal]` `drop_weight_percent` | `100` | How often bosses drop it, compared with their essence. `0` = never |
+| `[crystal]` `stash_slot_right`, `stash_slot_down` | `4`, `3` | Where the crystal's stash slot goes, counted in slots from the Western Worldstone Shard's slot. `0` and `0`: a free place near it |
+| `[desecration]` | as `[crystal]` | The same settings for the Shard of Desecration: `enabled`, `name`, `name_color`, `drop_weight_percent`, `stash_slot`, `stash_slot_right` (`3`), `stash_slot_down` (`3`) |
 | `[restore]` `strip_on_downgrade` | `true` | Back to elite takes a restore off. `false`: nothing is written down and a restored item keeps its attributes |
 | `[crystal]` `stash_slot` | `true` | The crystal has a slot in the stash's stacking tabs. `false`: an ordinary item. Take your crystals out of that slot before you turn this off |
 | `[restore]` `enabled` | `true` | Turns restoring on or off |

@@ -28,7 +28,7 @@
 namespace {
 
 const D2RL::PluginContext* g_ctx = nullptr;
-char                       g_status[1400] = "Exalted Items: not run yet.";
+char                       g_status[2000] = "Exalted Items: not run yet.";
 exalted::Config            g_config;
 
 void LogF(const char* format, ...) {
@@ -211,6 +211,7 @@ struct GameIo : exalted::Io {
 	}
 
 	bool HasCopy(const std::string& rel) override { return IsFile(genRoot + L"\\" + Widen(rel)); }
+	bool ReadCopy(const std::string& rel, std::string& out) override { return ReadWhole(genRoot + L"\\" + Widen(rel), out); }
 
 	void ListMod(const std::string& relDir, std::vector<std::string>& names) override {
 		WIN32_FIND_DATAW   found {};
@@ -781,12 +782,37 @@ exalted::Config LoadConfig() {
 				config.crystalDropPercent = number;
 			} else if (key == "stash_slot") {
 				config.crystalStashSlot = on;
+			} else if (key == "stash_slot_right") {
+				config.crystalSlotRight = number;
+			} else if (key == "stash_slot_down") {
+				config.crystalSlotDown = number;
 			} else if (key == "name_color") {
 				const char code = ColourCode(textValue);
 				if (code < 0) {
 					LogF("config: name_color = \"%s\" is not understood (use %s, or none); orange is used", textValue.c_str(), kColourList);
 				} else {
 					config.crystalColor = code;
+				}
+			}
+		} else if (section == "desecration") {
+			if (key == "enabled") {
+				config.desecrationEnabled = on;
+			} else if (key == "name") {
+				config.desecrationName = textValue;
+			} else if (key == "drop_weight_percent") {
+				config.desecrationDropPercent = number;
+			} else if (key == "stash_slot") {
+				config.desecrationStashSlot = on;
+			} else if (key == "stash_slot_right") {
+				config.desecrationSlotRight = number;
+			} else if (key == "stash_slot_down") {
+				config.desecrationSlotDown = number;
+			} else if (key == "name_color") {
+				const char code = ColourCode(textValue);
+				if (code < 0) {
+					LogF("config: name_color = \"%s\" is not understood (use %s, or none); orange is used", textValue.c_str(), kColourList);
+				} else {
+					config.desecrationColor = code;
 				}
 			}
 		} else if (section == "restore") {
@@ -840,6 +866,11 @@ exalted::Config LoadConfig() {
 	clamp(config.statStepPercent, 0, 300);
 	clamp(config.levelReqCap, 1, 110);
 	clamp(config.crystalDropPercent, 0, 1000);
+	clamp(config.desecrationDropPercent, 0, 1000);
+	clamp(config.crystalSlotRight, -20, 20);
+	clamp(config.crystalSlotDown, -20, 20);
+	clamp(config.desecrationSlotRight, -20, 20);
+	clamp(config.desecrationSlotDown, -20, 20);
 	if (config.crystalName.empty() || config.crystalName.size() > 60) {
 		config.crystalName = "Restoration Crystal";
 	}
@@ -1387,13 +1418,23 @@ const MenuRow kMenu[] = {
 	{ "recipes", "normal_weapon", "string", "Normal weapon", nullptr, 0, 0, 0 },
 	{ "recipes", "normal_armor", "string", "Normal armor", nullptr, 0, 0, 0 },
 	{ nullptr, nullptr, "header", "Back to elite: any exalted item + these item codes (empty = off)", nullptr, 0, 0, 0 },
-	{ "recipes", "downgrade", "string", "Exalted to elite", "r01 is the El rune. The item stays what it is, on its elite base.", 0, 0, 0 },
+	{ "recipes", "downgrade", "string", "Exalted to elite", "desecration is the Shard of Desecration (r01 would be the El rune). The item stays what it is, on its elite base.", 0, 0, 0 },
 	{ nullptr, nullptr, "header", "Restoration Crystal (in a recipe above, the word crystal stands for it)", nullptr, 0, 0, 0 },
 	{ "crystal", "enabled", "bool", "Crystal", "Off: there is no such item, and recipes that name it are left out.", 0, 1, 1 },
 	{ "crystal", "name", "string", "Name", nullptr, 0, 0, 0 },
 	{ "crystal", "name_color", "string", "Name colour", "orange (as essences, keys and Worldstone Shards), white, red, green, blue, gold, grey, tan, yellow, darkgreen, purple.", 0, 0, 0 },
 	{ "crystal", "drop_weight_percent", "int", "Boss drop weight %", "Hell act bosses drop it. 100 = as often as their essence, 0 = never.", 0, 1000, 10 },
 	{ "crystal", "stash_slot", "bool", "Stacks in the stash", "A slot of its own in the stash's stacking tabs, beside the Worldstone Shards. Off: an ordinary item.", 0, 1, 1 },
+	{ "crystal", "stash_slot_right", "int", "Stash slot: slots to the right", "Counted from the Western Worldstone Shard's slot. 0 and 0: a free place near it.", -20, 20, 1 },
+	{ "crystal", "stash_slot_down", "int", "Stash slot: slots down", nullptr, -20, 20, 1 },
+	{ nullptr, nullptr, "header", "Shard of Desecration (in a recipe, the word desecration stands for it)", nullptr, 0, 0, 0 },
+	{ "desecration", "enabled", "bool", "Shard", "Off: there is no such item, and recipes that name it are left out.", 0, 1, 1 },
+	{ "desecration", "name", "string", "Name", nullptr, 0, 0, 0 },
+	{ "desecration", "name_color", "string", "Name colour", "orange (as essences, keys and Worldstone Shards), white, red, green, blue, gold, grey, tan, yellow, darkgreen, purple.", 0, 0, 0 },
+	{ "desecration", "drop_weight_percent", "int", "Boss drop weight %", "The bosses that drop the crystal drop it. 100 = as often as their essence, 0 = never.", 0, 1000, 10 },
+	{ "desecration", "stash_slot", "bool", "Stacks in the stash", nullptr, 0, 1, 1 },
+	{ "desecration", "stash_slot_right", "int", "Stash slot: slots to the right", "Counted from the Western Worldstone Shard's slot. 0 and 0: a free place near it.", -20, 20, 1 },
+	{ "desecration", "stash_slot_down", "int", "Stash slot: slots down", nullptr, -20, 20, 1 },
 	{ nullptr, nullptr, "header", "Restoring: exalted item + crystal adds these, once per item", nullptr, 0, 0, 0 },
 	{ "restore", "enabled", "bool", "Restoring", nullptr, 0, 1, 1 },
 	{ "restore", "material", "string", "Material", "Item codes; crystal stands for the Restoration Crystal.", 0, 0, 0 },
@@ -1454,8 +1495,15 @@ const MenuRow* MenuFind(const char* key) {
 std::string MenuValue(const MenuRow& row) {
 	const std::string key     = row.key;
 	const std::string section = row.section;
-	if (section == "crystal") {
-		return key == "enabled" ? (g_config.crystalEnabled ? "true" : "false") : key == "name" ? g_config.crystalName : key == "name_color" ? ColourWord(g_config.crystalColor) : key == "stash_slot" ? (g_config.crystalStashSlot ? "true" : "false") : std::to_string(g_config.crystalDropPercent);
+	if (section == "crystal" || section == "desecration") {
+		const bool crystal = section == "crystal";
+		if (key == "enabled") return (crystal ? g_config.crystalEnabled : g_config.desecrationEnabled) ? "true" : "false";
+		if (key == "name") return crystal ? g_config.crystalName : g_config.desecrationName;
+		if (key == "name_color") return ColourWord(crystal ? g_config.crystalColor : g_config.desecrationColor);
+		if (key == "stash_slot") return (crystal ? g_config.crystalStashSlot : g_config.desecrationStashSlot) ? "true" : "false";
+		if (key == "stash_slot_right") return std::to_string(crystal ? g_config.crystalSlotRight : g_config.desecrationSlotRight);
+		if (key == "stash_slot_down") return std::to_string(crystal ? g_config.crystalSlotDown : g_config.desecrationSlotDown);
+		return std::to_string(crystal ? g_config.crystalDropPercent : g_config.desecrationDropPercent);
 	}
 	if (section == "restore") {
 		return key == "enabled" ? (g_config.restoreEnabled ? "true" : "false") : key == "material" ? g_config.restoreMaterial : key == "strip_on_downgrade" ? (g_config.restoreStrip ? "true" : "false") : (g_config.restoreShowLine ? "true" : "false");
@@ -1776,7 +1824,7 @@ constexpr D2RL::PluginInfo kPluginInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = "exalted-items",
 	.name        = "Exalted Items",
-	.version     = "0.11.0",
+	.version     = "0.12.0",
 	.author      = "Latedozer",
 	.description = "A fourth item tier above elite, built from the active mod's own item tables.",
 	.flags       = D2RL::PluginFlags::Shared | D2RL::PluginFlags::NativeHooks,
@@ -1891,9 +1939,16 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	} else {
 		snprintf(crystal, sizeof(crystal), "no Restoration Crystal");
 	}
+	char shard[200];
+	if (!summary.desecrationCode.empty()) {
+		snprintf(shard, sizeof(shard), "Shard of Desecration (item code %s, %s, %s) in %d boss loot rows", summary.desecrationCode.c_str(), summary.desecrationTinted ? "red picture" : "the shard's own picture",
+		         summary.desecrationSlots > 0 ? "stacks in the stash" : "does not stack", summary.desecrationRows);
+	} else {
+		snprintf(shard, sizeof(shard), "no Shard of Desecration");
+	}
 	snprintf(g_status, sizeof(g_status),
-	         "Exalted Items: %d exalted bases at item levels %d to %d (%d names, %d models); they drop %s; unique drops: %s; set drops: %s; %d cube upgrade recipes, %d back to elite; %s; %s. %d adjusted file(s), %d rebuilt this start; mod files untouched.",
-	         summary.bases, summary.levelLow, summary.levelHigh, summary.names, summary.models, summary.terrorZoneOnly ? "only in terror zones" : "everywhere", g_pickState[exalted::PickUnique], g_pickState[exalted::PickSet], summary.recipes, summary.downgrades, crystal, loot,
+	         "Exalted Items: %d exalted bases at item levels %d to %d (%d names, %d models); they drop %s; unique drops: %s; set drops: %s; %d cube upgrade recipes, %d back to elite; %s; %s; %s. %d adjusted file(s), %d rebuilt this start; mod files untouched.",
+	         summary.bases, summary.levelLow, summary.levelHigh, summary.names, summary.models, summary.terrorZoneOnly ? "only in terror zones" : "everywhere", g_pickState[exalted::PickUnique], g_pickState[exalted::PickSet], summary.recipes, summary.downgrades, crystal, shard, loot,
 	         static_cast<int>(summary.files.size()), io.rewritten);
 	LogF("%s (%d import slots redirected)", g_status, slots);
 	// Where the time went, so a slow start can be told from the log.

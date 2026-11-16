@@ -3,6 +3,26 @@
 Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
 for them.
 
+## 0.12.0 (2026-11-15)
+
+- New item: the Shard of Desecration, a Worldstone Shard tinted red. It is the material that
+  turns an exalted item back to elite, in place of the El rune (`downgrade = "desecration"`;
+  `"r01"` still works if you prefer the rune).
+- It drops through the same loot rows as the Restoration Crystal (the Hell act bosses, Blood
+  Raven, the Countess and Nihlathak; 43 rows), with the same weight. Settings under
+  `[desecration]`, the same ones the crystal has.
+- Stash slots: the crystal's slot moves one row down and three slots right, and the shard's
+  slot stands beside it (with this mod set: the row under Baal's Eye and Mephisto's Brain).
+  New settings `stash_slot_right` / `stash_slot_down` give each slot's place, counted in
+  slots from the Western Worldstone Shard's slot; a place that is taken, or that does not join
+  the existing slots, falls back to a free place found near it.
+- The painted slot frames follow the slots: the stored stash background is made again
+  whenever the slots' places change.
+- Each of those boss loot rows now holds two more entries than the mod's own (crystal and
+  shard), so the other things in those rows drop a little less often than with the crystal
+  alone.
+- Includes 0.11.0 (back to elite takes a restore off) and 0.10.6, neither installed before.
+
 ## 0.11.0 (2026-11-15)
 
 - Turning a restored item back to elite takes the restore off: the item loses exactly what the

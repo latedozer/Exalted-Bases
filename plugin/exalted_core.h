@@ -25,6 +25,8 @@ struct Io {
 	// out from the game's own art (the crystal's picture), which is not read again while the
 	// result is still there.
 	virtual bool HasCopy(const std::string& rel) { (void)rel; return false; }
+	// Reads a stored adjusted copy (false when there is none).
+	virtual bool ReadCopy(const std::string& rel, std::string& out) { (void)rel; (void)out; return false; }
 	// File names (no folders) directly inside a mod folder.
 	virtual void ListMod(const std::string& relDir, std::vector<std::string>& names) = 0;
 	virtual void Log(const char* text) = 0;
@@ -101,6 +103,10 @@ inline constexpr int         kRollStatCount    = static_cast<int>(sizeof(kRollPr
 inline constexpr const char* kCrystalKey = "*crystal";
 // The word that stands for the crystal in a list of cube materials.
 inline constexpr const char* kCrystalWord = "crystal";
+// The Shard of Desecration: a second item made the same way (a red Worldstone Shard, dropped by
+// the same bosses), the default material for turning an exalted item back to elite.
+inline constexpr const char* kDesecrationKey  = "*desecration";
+inline constexpr const char* kDesecrationWord = "desecration";
 
 // A restored item carries a marker stat, which is what makes a second restore impossible. A
 // saved item names its stats by number, so the marker has a fixed number that does not move
@@ -129,7 +135,7 @@ struct Config {
 	std::vector<Recipe> recipes;
 	// Materials that turn an exalted item back into the same item on its elite base (any
 	// quality). Item codes separated by spaces; "" = no such recipe. r01 is the El rune.
-	std::string downgrade = "r01";
+	std::string downgrade = "desecration";
 	// The Restoration Crystal. Off: no such item, and recipes that name it are left out.
 	bool        crystalEnabled  = true;
 	std::string crystalName     = "Restoration Crystal";
@@ -144,6 +150,16 @@ struct Config {
 	// The crystal gets a slot of its own in the stash's stacking tabs (beside the Worldstone
 	// Shards), where it piles up like the game's own materials. Off: an ordinary item.
 	bool        crystalStashSlot = true;
+	// Where that slot goes: this many slots to the right of and below the Western Worldstone
+	// Shard's slot. When that place is taken (or both are 0) a free place near it is found.
+	int         crystalSlotRight = 4, crystalSlotDown = 3;
+	// The Shard of Desecration: the same settings as the crystal's.
+	bool        desecrationEnabled     = true;
+	std::string desecrationName        = "Shard of Desecration";
+	char        desecrationColor       = '8';
+	int         desecrationDropPercent = 100;
+	bool        desecrationStashSlot   = true;
+	int         desecrationSlotRight = 3, desecrationSlotDown = 3;
 	// Restoring: exalted item + these materials -> the same item with the attributes of its kind.
 	bool        restoreEnabled  = true;
 	std::string restoreMaterial = "crystal";
@@ -233,6 +249,10 @@ struct Summary {
 	bool        crystalTinted  = false; // it has a picture of its own (the tinted shard)
 	int         crystalRows    = 0; // loot rows the crystal was added to (first data bank)
 	int         crystalSlots   = 0; // stash layouts that hold a slot for the crystal (0 = it does not stack)
+	std::string desecrationCode;        // item code of the Shard of Desecration ("" = there is none)
+	bool        desecrationTinted = false;
+	int         desecrationRows   = 0;
+	int         desecrationSlots  = 0;
 	int         rollStats      = 0; // restore attributes whose roll is written down on the item (0 = a restore cannot be taken off)
 	int         restores       = 0; // restore recipes added per data bank
 	bool        terrorZoneOnly = false; // the exalted rows carry the terror zone condition

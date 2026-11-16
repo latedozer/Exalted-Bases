@@ -93,6 +93,14 @@ One item, built like an exalted base: a copy of a row the mod has (the Western W
 Shard `xa1`; in tables without it, an essence), with its own code, kept in `codes.txt` as
 `*crystal=<code>`. The cells that make the shard usable are cleared.
 
+- **The Shard of Desecration.** A second item made by the same code as the crystal (same
+  template row, red tint, code kept as `*desecration=`), word `desecration` in recipes,
+  default material of the back-to-elite recipe. `AddMaterialDrops` runs once per item, so the
+  shard sits beside the crystal in the same loot rows. Slots: `AddStashSlot` takes a wished
+  place (slots right of / below the `xa1` slot, in the pitch of its neighbours); a wish that
+  is taken or does not join an existing slot falls back to `FreeSlotPlace`. The frames of all
+  new slots are painted into one copy of the background; the copy is reused only while the
+  stored layout (`Io::ReadCopy`) is identical to the new one, i.e. the places are the same.
 - **Taking a restore off (`restore_strip.h`).** The cube has no output that removes attributes
   and a recipe cannot read what an item rolled. So every restore property has a twin
   (`xlt-r<n>`, order fixed in `kRollProperties`): the same row plus one function 3 that puts

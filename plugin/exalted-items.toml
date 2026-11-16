@@ -97,6 +97,24 @@ drop_weight_percent = 100
 # set_materials_limit (d2rloader.toml). false = no slot: the crystal is an ordinary item.
 stash_slot = true
 
+# Where that slot goes: this many slots to the right of, and below, the Western Worldstone
+# Shard's slot. When that place is taken, or both numbers are 0, a free place near it is used.
+stash_slot_right = 4
+stash_slot_down = 3
+
+# The Shard of Desecration: a red Worldstone Shard. In the cube it turns an exalted item back
+# into the same item on its elite base (the [recipes] downgrade recipe); in a recipe the word
+# "desecration" stands for it. It is made and dropped exactly like the crystal: the same bosses,
+# in the same loot rows, each setting below meaning what it means under [crystal].
+[desecration]
+enabled = true
+name = "Shard of Desecration"
+name_color = "orange"
+drop_weight_percent = 100
+stash_slot = true
+stash_slot_right = 3
+stash_slot_down = 3
+
 # Cube recipes: an ELITE item of that kind + these materials -> the same item on its exalted base.
 # Names are <unique|set|rare|magic|crafted|normal>_<weapon|armor>. Materials are item codes
 # separated by spaces: the word crystal is the Restoration Crystal, r01-r33 are runes, gp? are
@@ -119,8 +137,10 @@ normal_weapon = ""
 normal_armor = ""
 
 # Back to elite: any exalted item (plain, magic, rare, set, unique...) + these materials -> the
-# same item on its elite base. r01 is the El rune. "" turns it off.
-downgrade = "r01"
+# same item on its elite base. "desecration" is the Shard of Desecration (see [desecration]).
+# Item codes work too: "r01" is the El rune, which was the material before 0.12.0. "" turns
+# it off.
+downgrade = "desecration"
 
 # Restoring: an EXALTED item of any quality + the material -> the same item with every
 # attribute listed for its kind below, each rolled in its range. It works once per item: a

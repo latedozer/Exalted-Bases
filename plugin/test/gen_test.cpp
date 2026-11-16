@@ -131,6 +131,9 @@ int main(int argc, char** argv) {
 	int             pickTest = 0;
 	// The tests written before the crystal run without it; "crystal=1" turns it on.
 	config.crystalEnabled = false;
+	config.desecrationEnabled = false;
+	config.downgrade = "r01";
+	bool downgradeSet = false;
 	config.recipes = { { "unique_weapon", "r26 r30 gpg" }, { "unique_armor", "r29 r27 gpw" }, { "set_weapon", "r26 r30 gpg" },
 		               { "set_armor", "r29 r27 gpw" },     { "rare_weapon", "r29 r33 gpb" },  { "rare_armor", "r28 r32 gpv" } };
 	for (int i = 4; i < argc; ++i) {
@@ -149,8 +152,11 @@ int main(int argc, char** argv) {
 		if (key == "picktest") pickTest = value;
 		if (key == "upgradereq") config.upgradeLevelReq = value;
 		if (key == "zone") config.terrorZoneOnly = value != 0;
+		if (key == "downgrade") downgradeSet = true;
 		if (key == "downgrade") config.downgrade = strcmp(eq + 1, "off") == 0 ? "" : eq + 1;
-		if (key == "crystal") config.crystalEnabled = value != 0;
+		if (key == "crystal") config.crystalEnabled = config.desecrationEnabled = value != 0;
+		if (key == "shard") config.desecrationEnabled = value != 0;
+		if (key == "sharddrop") config.desecrationDropPercent = value;
 		if (key == "crystaldrop") config.crystalDropPercent = value;
 		if (key == "crystalslot") config.crystalStashSlot = value != 0;
 		if (key == "crystalcolor") config.crystalColor = strcmp(eq + 1, "none") == 0 ? '\0' : eq[1];
@@ -162,11 +168,13 @@ int main(int argc, char** argv) {
 			for (auto& recipe : config.recipes) recipe.materials = "crystal";
 		}
 	}
+	if (config.desecrationEnabled && !downgradeSet) config.downgrade = "desecration"; // as the settings file has it
 	const exalted::Summary s = exalted::Run(io, config);
 	printf("ok=%d error='%s' banks=%d bases=%d levels=%d..%d uniques=%d sets=%d recipes=%d downgrades=%d rungs=%d repointed=%d names=%d models=%d files=%d zone=%d zonerows=%d\n", s.ok, s.error.c_str(), s.banks, s.bases,
 	       s.levelLow, s.levelHigh, s.uniques, s.sets, s.recipes, s.downgrades, s.rungs, s.repointed, s.names, s.models, s.filesWritten, s.terrorZoneOnly ? 1 : 0, s.zoneRows);
 	if (config.crystalEnabled) {
 		printf("crystal='%s' tinted=%d restores=%d crystalrows=%d\n", s.crystalCode.c_str(), s.crystalTinted ? 1 : 0, s.restores, s.crystalRows);
+		printf("shard='%s' tinted=%d rows=%d slots=%d crystalslots=%d\n", s.desecrationCode.c_str(), s.desecrationTinted ? 1 : 0, s.desecrationRows, s.desecrationSlots, s.crystalSlots);
 	}
 	if (!saveCodes.empty()) {
 		FILE* f = fopen(saveCodes.c_str(), "wb");
