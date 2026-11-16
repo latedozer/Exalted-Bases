@@ -132,6 +132,13 @@ material = "crystal"
 # true: a restored item shows the line "Restored".
 show_line = true
 
+# Turning a restored item back to elite (the [recipes] downgrade recipe) takes the restore off:
+# the item loses exactly what the restore added, and "Restored" with it, so it can be restored
+# again later. For that, a restore writes the amounts it rolled onto the item as hidden values.
+# Items restored by a version before 0.11.0 have no such values: they keep their attributes.
+# false = nothing is written down, and a restored item keeps its attributes when turned back.
+strip_on_downgrade = true
+
 # One line per attribute: false leaves it out of restores made from then on (items already
 # restored keep what they got). A kind with every line false cannot be restored.
 [restore.body_armor]

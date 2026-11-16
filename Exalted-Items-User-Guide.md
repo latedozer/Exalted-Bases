@@ -1,8 +1,8 @@
-# Exalted Items: user guide (v0.10.6)
+# Exalted Items: user guide (v0.11.0)
 
 Exalted Items adds a fourth tier of weapons and armor above elite, called Exalted.
 
-v0.10.6 has passed its offline checks but has not been played yet. The Restoration Crystal,
+v0.11.0 has passed its offline checks but has not been played yet. The Restoration Crystal,
 its stash slot, the cube recipes and multiplayer are untested in the game.
 
 ## What it adds
@@ -58,8 +58,16 @@ rolled in its range. It works on any quality, once per item. A restored item say
 Every kind also gets **requirements -5 to 10%**: the strength and dexterity needed to equip
 the item go down by that much. The level requirement does not change.
 
-An attribute the item already has is added on top. The attributes stay when the item is
-turned back to elite, and the item cannot be restored a second time.
+An attribute the item already has is added on top. The item cannot be restored a second time
+while it is restored.
+
+**Back to elite takes the restore off.** Turning a restored item back to elite (the El rune
+recipe) removes exactly what the restore added, and the "Restored" line with it. The item is
+then as it was before the restore, on its elite base, and can be upgraded and restored again.
+The crystal is not given back. This works only for items restored with v0.11.0 or later: a
+restore now writes the amounts it rolled onto the item as hidden values, and older restored
+items have none, so they keep their attributes. It needs the game build the plugin knows; in
+another build the `exalted` console line says so and restored items keep their attributes.
 
 ## Uniques and sets
 
@@ -89,6 +97,7 @@ game. Changes apply the next time the game starts.
 | `[crystal]` `name` | `"Restoration Crystal"` | Its name |
 | `[crystal]` `name_color` | `"orange"` | Colour of the name. Orange is what the game uses for essences, keys and Worldstone Shards |
 | `[crystal]` `drop_weight_percent` | `100` | How often bosses drop it, compared with their essence. `0` = never |
+| `[restore]` `strip_on_downgrade` | `true` | Back to elite takes a restore off. `false`: nothing is written down and a restored item keeps its attributes |
 | `[crystal]` `stash_slot` | `true` | The crystal has a slot in the stash's stacking tabs. `false`: an ordinary item. Take your crystals out of that slot before you turn this off |
 | `[restore]` `enabled` | `true` | Turns restoring on or off |
 | `[restore]` `show_line` | `true` | Whether a restored item says "Restored" |

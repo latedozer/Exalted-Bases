@@ -87,6 +87,16 @@ inline constexpr RestoreKind kRestoreKinds[] = {
 	  { { "enhanced_damage", "dmg%", 15, 30, "Enhanced damage +15 to 30%" }, { "attack_speed", "swing1", 5, 10, "Increased attack speed +5 to 10%" }, { "attack_rating", "att%", 5, 10, "Attack rating +5 to 10%" }, { "requirements", "ease", -10, -5, "Requirements -5 to 10%" } } },
 };
 
+// Taking a restore off again. A restore rolls each attribute, so what it added has to be
+// written down on the item: every property below gets a twin (`xlt-r<n>`) that puts the same
+// roll into a hidden stat of its own as well, and restore recipes use the twin. The hidden
+// stats have fixed numbers, counted down from kRollStatTop in this order, because a saved item
+// stores a stat by number. NEVER reorder or remove an entry; new ones go at the end.
+inline constexpr const char* kRollProperties[] = { "res-all", "ac%", "hp%", "regen", "block", "move1", "mana%", "swing1", "att%", "balance1", "cast1", "dmg%", "ease" };
+inline constexpr int         kRollStatTop      = 499;
+inline constexpr const char* kRestoredPropertyCode = "xlt-restored"; // the property that marks an item as restored
+inline constexpr int         kRollStatCount    = static_cast<int>(sizeof(kRollProperties) / sizeof(kRollProperties[0]));
+
 // The crystal's line in the saved codes (see Config::savedCodes): "*crystal=<item code>".
 inline constexpr const char* kCrystalKey = "*crystal";
 // The word that stands for the crystal in a list of cube materials.
@@ -138,6 +148,10 @@ struct Config {
 	bool        restoreEnabled  = true;
 	std::string restoreMaterial = "crystal";
 	bool        restoreShowLine = true; // a restored item says so
+	// Turning a restored item back to elite takes the restore attributes off again (and the
+	// item can be restored anew). Needs the amounts a restore rolled, which are kept on the
+	// item as hidden values (see kRollProperties). Off: nothing is recorded or taken off.
+	bool        restoreStrip    = true;
 	std::vector<std::string> restoreOff; // attributes turned off, as "<kind key>.<attribute key>"
 	// Exalted codes handed out by earlier runs (elite code, exalted code). A family keeps its
 	// code for good, whatever other mods add later. The crystal's code is kept here as well,
@@ -219,6 +233,7 @@ struct Summary {
 	bool        crystalTinted  = false; // it has a picture of its own (the tinted shard)
 	int         crystalRows    = 0; // loot rows the crystal was added to (first data bank)
 	int         crystalSlots   = 0; // stash layouts that hold a slot for the crystal (0 = it does not stack)
+	int         rollStats      = 0; // restore attributes whose roll is written down on the item (0 = a restore cannot be taken off)
 	int         restores       = 0; // restore recipes added per data bank
 	bool        terrorZoneOnly = false; // the exalted rows carry the terror zone condition
 	int         zoneRows     = 0; // loot rows added that open a level table above the game's own only in a terror zone

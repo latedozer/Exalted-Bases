@@ -144,6 +144,10 @@ if [ -f "$VAN/$LAY/bankexpansionlayouthd.json" ]; then
 else
 	echo "  stash slot in the game's own layout: skipped (no layout in the test data)"
 fi
+gen cry6d crystal=1 strip=0 >/dev/null
+$CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6d" strip=0 >/dev/null && echo "  strip on downgrade off: no roll stats, no twins, recipes as before 0.11" || bad "strip on downgrade off"
+g++ -std=c++20 -O2 -Wall -Wextra -o "$N/strip_test" test/strip_test.cpp || bad "strip test build"
+for excel in global/excel global/excel/base; do "$N/strip_test" "$N/cry1/$excel" || bad "taking a restore off ($excel)"; done
 gen cry7 crystal=1 recipes=crystal savecodes="$N/crycodes1.txt" >/dev/null
 gen cry7r recipes=crystal 2>&1 | grep -c "names the crystal" | grep -q "^12$" && echo "  crystal off: the six recipes that name it are left out (and said so) in both table sets" || bad "recipes naming a crystal that is off"
 CODE="$(sed -n 's/^\*crystal=//p' "$N/crycodes1.txt")"
@@ -212,7 +216,8 @@ if command -v wine >/dev/null && command -v x86_64-w64-mingw32-g++ >/dev/null &&
 	host exalted-items.toml "$(winepath -w "$DUMP")" > "$N/host1.log"
 	grep -E "Exalted Items:|picker saw|FAIL|stand-in loader" "$N/host1.log" | cut -c1-260 | sed 's/^/  /'
 	grep -q "stand-in loader: ok" "$N/host1.log" || bad "stand-in loader, default settings"
-	grep -q "hooks installed: 2" "$N/host1.log" || bad "both hooks installed"
+	grep -q "hooks installed: 3" "$N/host1.log" || bad "the three hooks installed"
+	grep -q "back to elite: the hook took 50 restores off" "$N/host1.log" && echo "  back to elite: the DLL's hook takes a restore off, the item is exactly as before" || bad "the DLL taking a restore off"
 	grep -q "confirmed where they are known to be, no search" "$N/host1.log" && echo "  known game image: pickers confirmed without a search" || bad "the known game image was searched"
 	grep -o "start-up took.*" "$N/host1.log" | sed 's/^/  first start (under wine): /'
 	if [ -f "$D/$SHARD/mote_of_anguish.sprite" ]; then
@@ -237,13 +242,13 @@ if command -v wine >/dev/null && command -v x86_64-w64-mingw32-g++ >/dev/null &&
 	grep -o "start-up took.*" "$N/host2.log" | sed 's/^/  second start (under wine): /' 
 	sed -e 's/^unique_drops = .*/unique_drops = "elite"/' -e 's/^set_drops = .*/set_drops = "off"/' exalted-items.toml > build/test-elite.toml
 	host build/test-elite.toml "$(winepath -w "$DUMP")" > "$N/host3.log"
-	grep -q "unique drops: elite" "$N/host3.log" && grep -q "set drops: off" "$N/host3.log" && grep -q "hooks installed: 1" "$N/host3.log" && grep -q "stand-in loader: ok" "$N/host3.log" \
+	grep -q "unique drops: elite" "$N/host3.log" && grep -q "set drops: off" "$N/host3.log" && grep -q "hooks installed: 2" "$N/host3.log" && grep -q "stand-in loader: ok" "$N/host3.log" \
 		&& echo "  elite uniques only, sets off: one hook" || bad "tier settings in the DLL"
 	host exalted-items.toml none > "$N/host4.log"
 	grep -q "hooks installed: 0" "$N/host4.log" && grep -q "stand-in loader: ok" "$N/host4.log" && echo "  image without the pickers: no hooks, no failure" || bad "missing pickers"
 	sed -e 's/^terror_zone_only = .*/terror_zone_only = true/' exalted-items.toml > build/test-zone.toml
 	host build/test-zone.toml "$(winepath -w "$DUMP")" > "$N/host7.log"
-	grep -q "they drop only in terror zones" "$N/host7.log" && grep -q "hooks installed: 2" "$N/host7.log" && grep -q "stand-in loader: ok" "$N/host7.log" \
+	grep -q "they drop only in terror zones" "$N/host7.log" && grep -q "hooks installed: 3" "$N/host7.log" && grep -q "stand-in loader: ok" "$N/host7.log" \
 		&& [ "$(grep -c "picker saw" "$N/host7.log")" = "$(grep -c "picker saw" "$N/host1.log")" ] \
 		&& grep -q "cond('Desecrated')" build/fakegame/mods/TestMod/d2rloader/exalted-items/data/global/excel/armor.txt \
 		&& echo "  only in terror zones: condition in the stored copies, both hooks working as before" || bad "terror zone setting in the DLL"
@@ -255,7 +260,7 @@ if command -v wine >/dev/null && command -v x86_64-w64-mingw32-g++ >/dev/null &&
 	GS=build/fakegame/d2rloader/exalted-items/TestMod
 	cp "$MS/codes.txt" "$N/codes.before"
 	FAKE_SCOPE=global host exalted-items.toml "$(winepath -w "$DUMP")" > "$N/host9.log"
-	grep -q "stand-in loader: ok" "$N/host9.log" && grep -q "hooks installed: 2" "$N/host9.log" && grep -q "installed for every mod" "$N/host9.log" \
+	grep -q "stand-in loader: ok" "$N/host9.log" && grep -q "hooks installed: 3" "$N/host9.log" && grep -q "installed for every mod" "$N/host9.log" \
 		&& cmp -s "$N/codes.before" "$GS/codes.txt" && [ -f "$GS/data/global/excel/armor.txt" ] && [ -z "$(find "$MS/data" -type f 2>/dev/null)" ] \
 		&& echo "  installed for every mod: files in <game>/d2rloader/exalted-items/<mod>, codes taken over, old copies removed" || bad "global install"
 	FAKE_SCOPE=global host exalted-items.toml "$(winepath -w "$DUMP")" > "$N/host10.log"
@@ -268,11 +273,11 @@ if command -v wine >/dev/null && command -v x86_64-w64-mingw32-g++ >/dev/null &&
 	O="build/fakegame/mods/Some Other Mod"
 	mkdir -p "$O" && cp -r build/fakegame/mods/TestMod/TestMod.mpq "$O/Some Other Mod.mpq"
 	timeout 150 wine build/fake_host.exe "$(winepath -w "$PWD/build/d2rl-exalted-items.dll")" "$(winepath -w "$PWD/build/fakegame")" "Some Other Mod" "$(winepath -w "$PWD/exalted-items.toml")" "$(winepath -w "$DUMP")" > "$N/host12.log" 2>&1
-	grep -q "stand-in loader: ok" "$N/host12.log" && grep -q "hooks installed: 2" "$N/host12.log" && [ -f "$O/d2rloader/exalted-items/codes.txt" ] \
+	grep -q "stand-in loader: ok" "$N/host12.log" && grep -q "hooks installed: 3" "$N/host12.log" && [ -f "$O/d2rloader/exalted-items/codes.txt" ] \
 		&& echo "  a mod with another name (with a space in it): works" || bad "mod with another name"
 	mv "$O/Some Other Mod.mpq" "$O/Whatever.mpq"
 	FAKE_MPQ=Whatever.mpq FAKE_SCOPE=global timeout 150 wine build/fake_host.exe "$(winepath -w "$PWD/build/d2rl-exalted-items.dll")" "$(winepath -w "$PWD/build/fakegame")" "Some Other Mod" "$(winepath -w "$PWD/exalted-items.toml")" "$(winepath -w "$DUMP")" > "$N/host13.log" 2>&1
-	grep -q "stand-in loader: ok" "$N/host13.log" && grep -q "hooks installed: 2" "$N/host13.log" && [ -f "build/fakegame/d2rloader/exalted-items/Some Other Mod/data/global/excel/armor.txt" ] \
+	grep -q "stand-in loader: ok" "$N/host13.log" && grep -q "hooks installed: 3" "$N/host13.log" && [ -f "build/fakegame/d2rloader/exalted-items/Some Other Mod/data/global/excel/armor.txt" ] \
 		&& echo "  .mpq folder named differently from the mod, installed for every mod: works" || bad ".mpq folder with another name"
 	sed -e 's/^enabled = .*/enabled = false/' exalted-items.toml > build/test-off.toml
 	host build/test-off.toml "$(winepath -w "$DUMP")" > "$N/host5.log"

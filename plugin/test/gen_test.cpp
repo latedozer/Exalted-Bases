@@ -156,6 +156,7 @@ int main(int argc, char** argv) {
 		if (key == "crystalcolor") config.crystalColor = strcmp(eq + 1, "none") == 0 ? '\0' : eq[1];
 		if (key == "restore") config.restoreEnabled = value != 0;
 		if (key == "restoreline") config.restoreShowLine = value != 0;
+		if (key == "strip") config.restoreStrip = value != 0;
 		if (key == "restoreoff") config.restoreOff.push_back(eq + 1);
 		if (key == "recipes" && strcmp(eq + 1, "crystal") == 0) {
 			for (auto& recipe : config.recipes) recipe.materials = "crystal";

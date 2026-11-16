@@ -2,7 +2,7 @@
 """Checks the Restoration Crystal part of the generator's output.
 
   check_crystal.py <mod data dir> <vanilla data dir> <output without crystal> <output with crystal>
-                   [drop=<percent>] [off=<kind.attribute>,...] [restore=0] [line=0] [slot=0]
+                   [drop=<percent>] [off=<kind.attribute>,...] [restore=0] [line=0] [slot=0] [strip=0]
 
 The two outputs come from the same settings except for the crystal. Everything is worked out
 here a second time from the tables: which kind each exalted base is, what a restore must add,
@@ -21,6 +21,9 @@ OFF = set(filter(None, OPT.get("off", "").split(",")))
 RESTORE = OPT.get("restore", "1") != "0"
 LINE = OPT.get("line", "1") != "0"
 MARKER_ID = 500
+STRIP = OPT.get("strip", "1") != "0" and RESTORE
+ROLL_TOP = 499
+ROLL_PROPS = ["res-all", "ac%", "hp%", "regen", "block", "move1", "mana%", "swing1", "att%", "balance1", "cast1", "dmg%", "ease"]  # fixed order: exalted_core.h
 ESSENCES = {"tes", "ceh", "bet", "fed"}
 
 # The lists as the user set them (doc "Exalted Shard: attributes it could add", 2026-11-15).
@@ -150,13 +153,33 @@ for bank in ("global/excel", "global/excel/base"):
         names = [cell(sh, r, "stat") for r in srows]
         if len(set(names)) != len(names) or any(not n for n in names):
             fail(tag + "itemstatcost.txt: a stat name is empty or used twice")
+        rolls = range(ROLL_TOP - len(ROLL_PROPS) + 1, ROLL_TOP + 1) if STRIP else range(0)
         for i in range(len(stats_before[1]), min(MARKER_ID, len(srows))):
-            if any(c for k, c in enumerate(srows[i]) if k not in (sh["stat"], sh.get("*id", -1), sh.get("*eol", -1))):
+            if i in rolls:
+                # a hidden stat for one restore roll: saved (signed, -100..155), no text, no price
+                r = srows[i]
+                if cell(sh, r, "stat") != "xlt_roll_%d" % (ROLL_TOP - i) or cell(sh, r, "save bits") != "8" or cell(sh, r, "save add") != "100" or cell(sh, r, "signed") != "1" \
+                        or any(cell(sh, r, c) for c in ("descfunc", "descstrpos", "descstrneg", "add", "multiply")):
+                    fail(tag + "itemstatcost.txt: roll stat %d is not a hidden, saved, signed stat" % i)
+            elif any(c for k, c in enumerate(srows[i]) if k not in (sh["stat"], sh.get("*id", -1), sh.get("*eol", -1))):
                 fail(tag + "itemstatcost.txt: filler row %d is not empty" % i)
                 break
         ph, prows = props_after
-        if prows[:-1] != props_before[1] or cell(ph, prows[-1], "code") != "xlt-restored" or cell(ph, prows[-1], "stat1") != "xlt_restored" or cell(ph, prows[-1], "func1") != "1":
-            fail(tag + "properties.txt: expected the mod's rows and one 'xlt-restored' row")
+        added = prows[len(props_before[1]):]
+        if prows[: len(props_before[1])] != props_before[1] or not added or cell(ph, added[-1], "code") != "xlt-restored" or cell(ph, added[-1], "stat1") != "xlt_restored" or cell(ph, added[-1], "func1") != "1":
+            fail(tag + "properties.txt: expected the mod's rows, the twins and one 'xlt-restored' row")
+        if [cell(ph, r, "code") for r in added[:-1]] != (["xlt-r%d" % k for k in range(len(ROLL_PROPS))] if STRIP else []):
+            fail(tag + "properties.txt: the twin properties are not the expected ones: %s" % [cell(ph, r, "code") for r in added[:-1]])
+        by_code = {cell(ph, r, "code"): r for r in props_before[1]}
+        for k, r in enumerate(added[:-1] if STRIP else []):
+            # the twin is the property it stands for, plus one function 3 that fills its roll stat
+            base = by_code[ROLL_PROPS[k]]
+            diff = [ph_name for ph_name, at in ph.items() if at < len(r) and at < len(base) and r[at] != base[at]]
+            funcs = sorted(d for d in diff if d != "code")
+            ok = len(funcs) == 2 and funcs[0].startswith("func") and funcs[1] == "stat" + funcs[0][4:] and cell(ph, r, funcs[0]) == "3" and cell(ph, r, funcs[1]) == "xlt_roll_%d" % k \
+                and cell(ph, base, funcs[0]) == "" and funcs[0] != "func1"
+            if not ok:
+                fail(tag + "properties.txt: twin xlt-r%d is not '%s' plus one function 3 for its roll stat (%s)" % (k, ROLL_PROPS[k], diff))
 
     # --- restore recipes: one per exalted base, with exactly the attributes of its kind
     types = source(bank + "/itemtypes.txt")
@@ -178,15 +201,29 @@ for bank in ("global/excel", "global/excel/base"):
                 continue
             for key, kind_types, attributes in KINDS:
                 if any(is_a(cell(ih, r, "type").strip(), t) or is_a(cell(ih, r, "type2").strip(), t) for t in kind_types):
-                    mods = [(prop, lo, hi) for name, prop, lo, hi in attributes if key + "." + name not in OFF]
+                    mods = [("xlt-r%d" % ROLL_PROPS.index(prop) if STRIP and marked else prop, lo, hi) for name, prop, lo, hi in attributes if key + "." + name not in OFF]
                     if mods and marked:
                         expected[cell(ih, r, "code")] = (key, mods)
                     break
     ch, crows = written(WITH, bank + "/cubemain.txt")
     before = written(WITHOUT, bank + "/cubemain.txt")
     extra = crows[len(before[1]):]
-    if crows[: len(before[1])] != before[1]:
-        fail(tag + "cubemain.txt: rows other than the added restore recipes differ")
+    # The exalted -> elite recipes carry the sign that takes a restore off (the marker property
+    # with an amount of nothing) when restores are written down; nothing else about them changes.
+    same, signed_rows = True, 0
+    for now, was in zip(crows, before[1]):
+        if now == was:
+            continue
+        is_back = cell(ch, now, "output").strip('"') == "useitem,mod,eli" and cell(ch, now, "description").startswith("[xlt] ")
+        plain = list(now)
+        for name in ("mod 1", "mod 1 min", "mod 1 max"):
+            plain[ch[name]] = ""
+        if not is_back or plain != was or (cell(ch, now, "mod 1"), cell(ch, now, "mod 1 min"), cell(ch, now, "mod 1 max")) != ("xlt-restored", "0", "0"):
+            same = False
+        signed_rows += 1
+    back_rows = sum(1 for r in before[1] if cell(ch, r, "output").strip('"') == "useitem,mod,eli" and cell(ch, r, "description").startswith("[xlt] "))
+    if not same or signed_rows != (back_rows if STRIP and marked else 0):
+        fail(tag + "cubemain.txt: rows other than the added restore recipes differ, or the back-to-elite recipes do not carry the sign (%d of %d)" % (signed_rows, back_rows))
     seen = {}
     for r in extra:
         base = cell(ch, r, "input 1")

@@ -878,6 +878,7 @@ struct Bank {
 	Table       miscTable, stats, props; // misc.txt, itemstatcost.txt, properties.txt: loaded (and written) only for the crystal
 	std::string crystalCode;             // "" = this bank has no crystal
 	bool        marker        = false;   // the "restored" stat is in this bank's tables
+	std::map<std::string, std::string> rollTwin; // restore property -> its twin that also writes the roll down
 	int         restoresAdded = 0;
 	int         crystalRows   = 0;
 	RoTable     misc, itemTypes, uniques, setItems, monStats, superUniques; // only read
@@ -1152,6 +1153,8 @@ void AddDowngrades(Io& io, Bank& bank, const Config& config, const std::map<std:
 		inputs += qty != std::string::npos ? std::max(1, atoi(materials[i].c_str() + qty + 4)) : 1;
 		list += (i != 0 ? " + " : "") + materials[i];
 	}
+	const int  cStrip = t.Col("mod 1"), cStripMin = t.Col("mod 1 min"), cStripMax = t.Col("mod 1 max");
+	const bool strip  = bank.marker && !bank.rollTwin.empty() && cStrip >= 0 && cStripMin >= 0 && cStripMax >= 0;
 	for (const ItemTable* items : { &bank.weapons, &bank.armor }) {
 		for (const EliteFamily& family : items->families) {
 			const auto found = codes.find(family.eliteCode);
@@ -1171,6 +1174,13 @@ void AddDowngrades(Io& io, Bank& bank, const Config& config, const std::map<std:
 			t.Set(row, cVersion, "100");
 			t.Set(row, cNum, std::to_string(inputs));
 			t.Set(row, cOut, "\"useitem,mod,eli\"");
+			if (strip) {
+				// The sign for the plugin to take a restore off this item: the marker property
+				// with an amount of nothing. By itself (without the plugin's hook) it does nothing.
+				t.Set(row, cStrip, kRestoredPropertyCode);
+				t.Set(row, cStripMin, "0");
+				t.Set(row, cStripMax, "0");
+			}
 			t.rows.push_back(std::move(row));
 			++bank.downgradesAdded;
 		}
@@ -1794,8 +1804,9 @@ const char* const kEssences[]         = { "tes", "ceh", "bet", "fed" };
 const char* const kCrystalAsset       = "xlt_restoration_crystal";
 const char* const kCrystalString      = "xlt_crystal";
 const char* const kRestoredStat       = "xlt_restored";
-const char* const kRestoredProperty   = "xlt-restored";
+const char* const kRestoredProperty   = kRestoredPropertyCode;
 const char* const kRestoredString     = "xlt_restored";
+const char* const kRollTemplate       = "item_req_percent";
 const char* const kMarkerTemplate     = "item_indesctructible"; // (the game's spelling) a stat that is on an item or is not, with one line of text
 const char* const kMiscSprites        = "hd/global/ui/items/misc/";
 const char* const kMiscModels         = "hd/items/misc/";
@@ -1880,11 +1891,58 @@ void AddMarker(Io& io, Bank& bank, const Config& config) {
 		return;
 	}
 	std::vector<std::string> marker = s.rows[static_cast<size_t>(from)];
+	const size_t             original = s.rows.size(); // the mod's own stats
 	while (s.rows.size() < static_cast<size_t>(kRestoredStatId)) {
 		std::vector<std::string> filler = s.NewRow();
 		s.Set(filler, cStat, "xlt_unused_" + std::to_string(s.rows.size()));
 		s.Set(filler, cId, std::to_string(s.rows.size()));
 		s.rows.push_back(std::move(filler));
+	}
+	// The hidden stats a restore's rolls are written into: the filler rows just below the
+	// marker, when they are fillers (a mod with that many stats of its own gets none), shaped
+	// like "requirements %" (a signed amount the save holds from -100 to 155) without any text.
+	// Each restore property gets a twin whose extra function 3 ("the same amount as the first
+	// function rolled") fills its hidden stat.
+	int rollFrom = -1;
+	for (size_t i = 0; i < original; ++i) {
+		if (Trim(s.Get(s.rows[i], cStat)) == kRollTemplate) {
+			rollFrom = static_cast<int>(i);
+		}
+	}
+	if (config.restoreStrip && rollFrom >= 0 && original + static_cast<size_t>(kRollStatCount) <= static_cast<size_t>(kRollStatTop) + 1) {
+		for (int k = 0; k < kRollStatCount; ++k) {
+			int source = -1, slot = -1;
+			for (size_t i = 0; i < p.rows.size() && source < 0; ++i) {
+				if (p.Get(p.rows[i], cCode) == kRollProperties[k]) {
+					source = static_cast<int>(i);
+				}
+			}
+			for (int n = 2; source >= 0 && n <= 7 && slot < 0; ++n) {
+				const int cF = p.Col(("func" + std::to_string(n)).c_str()), cS = p.Col(("stat" + std::to_string(n)).c_str());
+				if (cF >= 0 && cS >= 0 && Trim(p.Get(p.rows[static_cast<size_t>(source)], cF)).empty() && Trim(p.Get(p.rows[static_cast<size_t>(source)], cS)).empty()) {
+					slot = n;
+				}
+			}
+			if (source < 0 || slot < 0 || Trim(p.Get(p.rows[static_cast<size_t>(source)], cFunc)).empty()) {
+				continue; // the mod has no such property, or its seven functions are all in use
+			}
+			const std::string        statName = "xlt_roll_" + std::to_string(k), code = "xlt-r" + std::to_string(k);
+			const size_t             id       = static_cast<size_t>(kRollStatTop - k);
+			std::vector<std::string> stat     = s.rows[static_cast<size_t>(rollFrom)];
+			s.Set(stat, cStat, statName);
+			s.Set(stat, cId, std::to_string(id));
+			// No text, and no part in the item's price.
+			for (const char* column : { "descpriority", "descfunc", "descval", "descstrpos", "descstrneg", "descstr2", "dgrp", "dgrpfunc", "dgrpval", "dgrpstrpos", "dgrpstrneg", "dgrpstr2", "Add", "Multiply" }) {
+				s.Set(stat, s.Col(column), "");
+			}
+			s.rows[id] = std::move(stat);
+			std::vector<std::string> twin = p.rows[static_cast<size_t>(source)];
+			p.Set(twin, cCode, code);
+			p.Set(twin, p.Col(("func" + std::to_string(slot)).c_str()), "3");
+			p.Set(twin, p.Col(("stat" + std::to_string(slot)).c_str()), statName);
+			p.rows.push_back(std::move(twin));
+			bank.rollTwin[kRollProperties[k]] = code;
+		}
 	}
 	s.Set(marker, cStat, kRestoredStat);
 	s.Set(marker, cId, std::to_string(kRestoredStatId));
@@ -2008,7 +2066,8 @@ void AddRestores(Io& io, Bank& bank, const Config& config, const std::map<std::s
 			t.Set(row, cMin[0], "1");
 			t.Set(row, cMax[0], "1");
 			for (size_t i = 0; i < attributes.size(); ++i) {
-				t.Set(row, cMod[i + 1], attributes[i]->property);
+				const auto twin = bank.rollTwin.find(attributes[i]->property);
+				t.Set(row, cMod[i + 1], twin != bank.rollTwin.end() ? twin->second : std::string(attributes[i]->property));
 				t.Set(row, cMin[i + 1], std::to_string(attributes[i]->min));
 				t.Set(row, cMax[i + 1], std::to_string(attributes[i]->max));
 			}
@@ -2917,6 +2976,9 @@ Summary Run(Io& io, const Config& settings) {
 			ExtendLadders(io, bank, config);
 			AddCrystalDrops(io, bank, config);
 			summary.restores = std::max(summary.restores, bank.restoresAdded);
+			if (bank.index == 0 || summary.rollStats == 0) {
+				summary.rollStats = static_cast<int>(bank.rollTwin.size());
+			}
 			if (bank.index == 0 || summary.crystalRows == 0) {
 				summary.crystalRows = bank.crystalRows;
 			}

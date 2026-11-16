@@ -3,6 +3,22 @@
 Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
 for them.
 
+## 0.11.0 (2026-11-15)
+
+- Turning a restored item back to elite takes the restore off: the item loses exactly what the
+  restore added and its "Restored" line, and can be restored again later. Before, it kept the
+  attributes, so a crystal and an El rune put restore attributes on an elite item.
+- How: the cube cannot remove attributes, so a restore now writes each amount it rolled into a
+  hidden value on the item (13 new hidden stats, numbers 487 to 499), and the plugin has a
+  third hook, on the game's "apply a property to an item" routine. The back-to-elite recipe
+  carries a sign; when the game applies it, the plugin applies the opposite of each written
+  amount through the game's own routine.
+- Items restored by 0.10.x have no written amounts: they keep their attributes and their mark.
+- The hook is only placed in the game build it was found in. Elsewhere the status line says so
+  and restored items keep their attributes; restoring still works.
+- New setting `strip_on_downgrade` under `[restore]` (default `true`), also in the menu.
+- Includes 0.10.6 (requirements -5 to 10% on restore), which was never installed on its own.
+
 ## 0.10.6 (2026-11-15)
 
 - Restoring also lowers the item's requirements by 5 to 10% (strength and dexterity; the

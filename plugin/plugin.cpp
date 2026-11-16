@@ -23,6 +23,7 @@
 #include "exalted_core.h"
 #include "game_code.h"
 #include "redirect_match.h"
+#include "restore_strip.h"
 
 namespace {
 
@@ -795,6 +796,8 @@ exalted::Config LoadConfig() {
 				config.restoreMaterial = textValue;
 			} else if (key == "show_line") {
 				config.restoreShowLine = on;
+			} else if (key == "strip_on_downgrade") {
+				config.restoreStrip = on;
 			}
 		} else if (section.compare(0, 8, "restore.") == 0) {
 			// [restore.<kind>]: one true/false line per attribute; only "off" needs remembering.
@@ -1253,6 +1256,97 @@ void InstallPickers(const D2RL::PluginContext* context, const std::vector<exalte
 	g_pickerHookMs = Clock() - hookStarted;
 }
 
+// --- Taking a restore off again (restore_strip.h) ---------------------------------------
+//
+// One hook on the game's "apply one property to an item" routine. Every call but one passes
+// straight through. The exception is the sign the exalted -> elite recipe carries (the marker
+// property with an amount of nothing): there the plugin takes the item's restore off, by
+// calling the same routine with the opposite of each amount the restore wrote down.
+//
+// Only in the game image this was written against: the routine and the four small helpers
+// are used at their known places, and the hook is refused when the bytes there differ.
+
+using ApplyPropertyFn = uint64_t (*)(int kind, void* item, void* third, void* fourth, int index, int sixth, exalted::PropertyCall* call, int state, int flags, void* tenth);
+using ItemVersionFn   = uint8_t (*)(void* item);
+using PropertyRowFn   = const uint8_t* (*)(uint8_t version, int id);
+using PropertyCountFn = int (*)(uint8_t version);
+using UnitStatFn      = int32_t (*)(void* unit, uint32_t stat, uint16_t layer);
+
+constexpr uintptr_t kApplyProperty        = 0x3d4620;
+constexpr uint8_t   kApplyPropertyEntry[] = { 0x48, 0x8b, 0xc4, 0x53, 0x56, 0x41, 0x54, 0x41, 0x55, 0x41, 0x57, 0x48, 0x83, 0xec, 0x60, 0x48, 0x8b, 0xb4, 0x24, 0xc0, 0x00, 0x00, 0x00 };
+constexpr uintptr_t kItemVersion          = 0x34a0e0;
+constexpr uint8_t   kItemVersionEntry[]   = { 0x48, 0x83, 0xec, 0x28, 0x48, 0x85, 0xc9, 0x75, 0x1a };
+constexpr uintptr_t kPropertyRow          = 0x3d3210;
+constexpr uint8_t   kPropertyRowEntry[]   = { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x20, 0x57, 0x48, 0x83, 0xec, 0x30, 0x48, 0x63, 0xda };
+constexpr uintptr_t kPropertyCount        = 0x3d32d0;
+constexpr uint8_t   kPropertyCountEntry[] = { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0xe8 };
+constexpr uintptr_t kUnitStat             = 0x2f5020; // the loader's own jump to its stat code
+constexpr uint8_t   kUnitStatEntry[]      = { 0xff, 0x25 };
+
+ApplyPropertyFn    g_originalApply = nullptr;
+ItemVersionFn      g_itemVersion   = nullptr;
+PropertyRowFn      g_propertyRow   = nullptr;
+PropertyCountFn    g_propertyCount = nullptr;
+UnitStatFn         g_unitStat      = nullptr;
+exalted::TwinTable g_twins;
+char               g_stripState[160] = "off";
+unsigned           g_stripped        = 0; // restores taken off since the game started
+
+struct StripEngine {
+	int   kind;
+	void *item, *third, *fourth;
+	int   index, sixth, state, flags;
+	void* tenth;
+	int            Version(void* unit) { return g_itemVersion(unit); }
+	int            PropertyCount(int version) { return g_propertyCount(static_cast<uint8_t>(version)); }
+	const uint8_t* Property(int version, int id) { return g_propertyRow(static_cast<uint8_t>(version), id); }
+	int            Stat(void* unit, int stat) { return g_unitStat(unit, static_cast<uint32_t>(stat), 0); }
+	void           Apply(const exalted::PropertyCall& call) {
+		exalted::PropertyCall copy = call;
+		g_originalApply(kind, item, third, fourth, index, sixth, &copy, state, flags, tenth);
+	}
+};
+
+uint64_t HookApplyProperty(int kind, void* item, void* third, void* fourth, int index, int sixth, exalted::PropertyCall* call, int state, int flags, void* tenth) {
+	// (min and max are looked at first: nearly every call has an amount and is done here)
+	if (call != nullptr && call->min == 0 && call->max == 0 && item != nullptr) {
+		StripEngine engine { kind, item, third, fourth, index, sixth, state, flags, tenth };
+		if (exalted::IsStripSign(engine, item, *call)) {
+			if (exalted::StripRestore(engine, item, *call, g_twins) > 0) {
+				++g_stripped;
+			}
+			return 0; // the sign itself adds nothing
+		}
+	}
+	return g_originalApply(kind, item, third, fourth, index, sixth, call, state, flags, tenth);
+}
+
+void InstallStrip(const D2RL::PluginContext* context, const exalted::Summary& summary) {
+	if (!g_config.restoreStrip || summary.rollStats == 0) {
+		snprintf(g_stripState, sizeof(g_stripState), "%s", g_config.restoreStrip ? "not possible with these tables (see the log)" : "off");
+		return;
+	}
+	const uintptr_t base = context->exeBase;
+	if (base == 0 || ImageStamp(base) != kKnownImageStamp || !context->CheckExpectedBytes(kApplyProperty, kApplyPropertyEntry, sizeof(kApplyPropertyEntry))
+	    || !context->CheckExpectedBytes(kItemVersion, kItemVersionEntry, sizeof(kItemVersionEntry)) || !context->CheckExpectedBytes(kPropertyRow, kPropertyRowEntry, sizeof(kPropertyRowEntry))
+	    || !context->CheckExpectedBytes(kPropertyCount, kPropertyCountEntry, sizeof(kPropertyCountEntry)) || !context->CheckExpectedBytes(kUnitStat, kUnitStatEntry, sizeof(kUnitStatEntry))) {
+		snprintf(g_stripState, sizeof(g_stripState), "NOT active: this game build is not the one the routine is known in; a restored item keeps its attributes");
+		LogF("back to elite: the game's property routine is not where it is known to be in this game build, so a restore is not taken off (restored items keep their attributes)");
+		return;
+	}
+	g_itemVersion   = reinterpret_cast<ItemVersionFn>(base + kItemVersion);
+	g_propertyRow   = reinterpret_cast<PropertyRowFn>(base + kPropertyRow);
+	g_propertyCount = reinterpret_cast<PropertyCountFn>(base + kPropertyCount);
+	g_unitStat      = reinterpret_cast<UnitStatFn>(base + kUnitStat);
+	if (!context->InstallInlineHook(kApplyProperty, kApplyPropertyEntry, sizeof(kApplyPropertyEntry), HookApplyProperty, &g_originalApply) || g_originalApply == nullptr) {
+		g_originalApply = nullptr;
+		snprintf(g_stripState, sizeof(g_stripState), "NOT active: the loader refused the hook; a restored item keeps its attributes");
+		LogF("back to elite: the loader refused the hook at 0x%llx", static_cast<unsigned long long>(kApplyProperty));
+		return;
+	}
+	snprintf(g_stripState, sizeof(g_stripState), "takes a restore off (%d attributes are written down on a restored item)", summary.rollStats);
+}
+
 // --- I Hate TOMLs (optional in-game settings menu) -------------------------------------
 //
 // When that plugin is installed, every setting shows up in its menu. Without it nothing here
@@ -1304,6 +1398,7 @@ const MenuRow kMenu[] = {
 	{ "restore", "enabled", "bool", "Restoring", nullptr, 0, 1, 1 },
 	{ "restore", "material", "string", "Material", "Item codes; crystal stands for the Restoration Crystal.", 0, 0, 0 },
 	{ "restore", "show_line", "bool", "Show \"Restored\" on the item", nullptr, 0, 1, 1 },
+	{ "restore", "strip_on_downgrade", "bool", "Back to elite takes the restore off", "The item loses what the restore added and can be restored again. Off: it keeps the attributes.", 0, 1, 1 },
 };
 
 // The fixed rows above, then one switch per attribute of every kind of item (exalted_core.h).
@@ -1363,7 +1458,7 @@ std::string MenuValue(const MenuRow& row) {
 		return key == "enabled" ? (g_config.crystalEnabled ? "true" : "false") : key == "name" ? g_config.crystalName : key == "name_color" ? ColourWord(g_config.crystalColor) : key == "stash_slot" ? (g_config.crystalStashSlot ? "true" : "false") : std::to_string(g_config.crystalDropPercent);
 	}
 	if (section == "restore") {
-		return key == "enabled" ? (g_config.restoreEnabled ? "true" : "false") : key == "material" ? g_config.restoreMaterial : (g_config.restoreShowLine ? "true" : "false");
+		return key == "enabled" ? (g_config.restoreEnabled ? "true" : "false") : key == "material" ? g_config.restoreMaterial : key == "strip_on_downgrade" ? (g_config.restoreStrip ? "true" : "false") : (g_config.restoreShowLine ? "true" : "false");
 	}
 	if (section.compare(0, 8, "restore.") == 0) {
 		const auto& off = g_config.restoreOff;
@@ -1681,7 +1776,7 @@ constexpr D2RL::PluginInfo kPluginInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = "exalted-items",
 	.name        = "Exalted Items",
-	.version     = "0.10.6",
+	.version     = "0.11.0",
 	.author      = "Latedozer",
 	.description = "A fourth item tier above elite, built from the active mod's own item tables.",
 	.flags       = D2RL::PluginFlags::Shared | D2RL::PluginFlags::NativeHooks,
@@ -1781,17 +1876,18 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 		return true;
 	}
 	InstallPickers(context, summary.families);
+	InstallStrip(context, summary);
 	char loot[160];
 	if (summary.rungs > 0) {
 		snprintf(loot, sizeof(loot), "%d loot rows added above the game's own, and %d high-level rows pointed at them", summary.rungs, summary.repointed);
 	} else {
 		snprintf(loot, sizeof(loot), "the game's own loot rows reach every level, none added");
 	}
-	char crystal[240];
+	char crystal[480];
 	if (!summary.crystalCode.empty()) {
-		snprintf(crystal, sizeof(crystal), "Restoration Crystal (item code %s, %s, %s) in %d boss loot rows, %d restore recipes", summary.crystalCode.c_str(),
+		snprintf(crystal, sizeof(crystal), "Restoration Crystal (item code %s, %s, %s) in %d boss loot rows, %d restore recipes; back to elite: %s", summary.crystalCode.c_str(),
 		         summary.crystalTinted ? "purple picture" : "the shard's own picture", summary.crystalSlots > 0 ? "stacks in the stash" : "does not stack", summary.crystalRows,
-		         summary.restores);
+		         summary.restores, g_stripState);
 	} else {
 		snprintf(crystal, sizeof(crystal), "no Restoration Crystal");
 	}

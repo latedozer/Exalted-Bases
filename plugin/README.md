@@ -93,6 +93,20 @@ One item, built like an exalted base: a copy of a row the mod has (the Western W
 Shard `xa1`; in tables without it, an essence), with its own code, kept in `codes.txt` as
 `*crystal=<code>`. The cells that make the shard usable are cleared.
 
+- **Taking a restore off (`restore_strip.h`).** The cube has no output that removes attributes
+  and a recipe cannot read what an item rolled. So every restore property has a twin
+  (`xlt-r<n>`, order fixed in `kRollProperties`): the same row plus one function 3 that puts
+  the same roll into a hidden stat (`xlt_roll_<n>`, ids 499 downward, shaped like
+  `item_req_percent`: signed, saved as -100..155, no text, no price). The game hands the first
+  function's amount to the later ones, and function 3 repeats it. Restore recipes use the
+  twins. Each exalted -> elite recipe carries `mod 1 = xlt-restored 0..0`, which by itself
+  does nothing. The plugin hooks the game's "apply one property" routine (0x3d4620 in image
+  6ab3782c); a call whose row has function 1 on stat 500 and an amount of 0..0 is that sign.
+  It then calls the routine with `-amount` for every twin whose hidden stat is set, and with
+  -1 for the marker. An item without hidden stats (restored by 0.10.x) is left alone. Known
+  image only: stamp plus the entry bytes of the routine and its four helpers are checked.
+  Tests: `test/strip_test.cpp` (model of the routine on generated tables) and step 1b of
+  `test/fake_host.cpp` (the real DLL's hook under Wine).
 - **Stash slot.** The stash's stacking tabs hold an item when its row says
   `AdvancedStashStackable` = 1 and the stash layout has an `AdvancedStashSlotWidget` naming
   its code. The plugin adds one such widget to adjusted copies of
