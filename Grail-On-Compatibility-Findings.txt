@@ -1,0 +1,101 @@
+EXALTED ITEMS AND GRAIL ON: COMPATIBILITY FINDINGS
+==================================================
+Date: 2026-11-15
+Exalted Items version: 0.12.0
+Grail On: d2rl-grail-on.dll, source read from
+  https://github.com/wild-healer/D2R-Tools  (plugins/grail-on/src/plugin.cpp, as of 2026-11-15)
+
+These findings come from reading Grail On's source code. They were not confirmed by watching
+the behaviour in the game.
+
+
+SUMMARY
+-------
+Exalted unique and set items cannot be made to file correctly in Grail On from the Exalted
+Items plugin alone. Grail On accepts the item, then moves it to its "Lost items" menu, because
+it checks that a stored item's base item code equals the base code in the unique's table row.
+An exalted item has its own base code. The check is inside Grail On, and Grail On offers no
+setting, file or plugin interface through which another plugin could add a base.
+
+
+WHAT HAPPENS TO AN EXALTED UNIQUE OR SET ITEM
+---------------------------------------------
+1. It is accepted into the grail.
+   Grail On matches an item to its tile by quality (unique or set) and by which row of the
+   unique/set table it is (GrailEntryOf). The base item is not compared there. An exalted
+   Harlequin Crest is recognised as Harlequin Crest.
+
+2. It is then shown under "Lost items" instead of on its tile.
+   Every time the tiles are rebuilt (RebuildStored), each stored record is tested with
+   RecordMatches:
+
+       return CodeText(record.code) == entry.code && record.qualityRecordId == entry.row;
+
+   entry.code is the base code written in the unique's own table row. record.code is the base
+   code of the item that was put in. For an exalted item these differ, so the record counts
+   as "not the item its entry says" and is listed in the Lost items menu.
+
+3. It is not destroyed.
+   The item stays stored and can be taken out again. The unique still counts as found
+   (MarkFound runs for every record).
+
+4. The ground loot filter does not treat it as that unique.
+   Grail On's loot rules trust a unique's row only when the item's base is the row's base
+   ("An unidentified item's row is only trusted when its base is the row's").
+
+5. Tile size and picture are not affected.
+   They come from the row's base, not from the stored item.
+
+
+WHY THE EXALTED ITEMS PLUGIN CANNOT FIX THIS
+--------------------------------------------
+- An exalted base must keep its own item code. Saved items name their base by that code; it
+  is what makes the item exalted.
+- A unique or set row has exactly one base code, and Grail On builds each tile from that row.
+- Grail On reads its lists from the game's tables at run time and provides no service, file
+  or setting for adding a base or an alias to a tile.
+
+The two routes that remain both break rules already set for this project:
+
+- Hooking Grail On's code while the game runs would change how Grail On behaves. The
+  instruction was not to change the Grail On mod.
+- Adding separate exalted rows to the unique and set tables would give exalted versions tiles
+  of their own, but that is the cloned-rows design that was rejected ("the grail should not
+  have clones"). Cloned rows at the end of those tables also caused the hardcore stash
+  "Error 30" on 2026-11-12.
+
+
+WHAT WORKS TODAY
+----------------
+Turn the item back to elite with a Shard of Desecration before filing it. It is then exactly
+the item its row describes and files normally. If the item was restored with 0.12.0 or later,
+turning it back also takes the restore attributes off, so the plain unique is what gets filed.
+
+
+THE FIX ON GRAIL ON'S SIDE (for its author, if wanted)
+------------------------------------------------------
+A small change in RecordMatches, and the same idea in the loot filter's base test: accept a
+stored item when its base belongs to the same item family as the row's base, instead of
+requiring the same code.
+
+How to tell from the game's own tables: every weapon and armor row carries the three family
+codes normcode, ubercode and ultracode. An exalted base is a copy of its family's elite row
+and keeps the family's original three codes. So two bases are the same family when their
+normcode (or all three codes) are equal. Suggested condition:
+
+    same row id, and ( record base code == entry base code
+                       or normcode of the record's base == normcode of the entry's base )
+
+Nothing else in Grail On would need to change for exalted items: matching is already by row,
+and a stored item is recreated from its own saved bytes and its own base code.
+
+
+FUNCTIONS REFERRED TO (plugins/grail-on/src/plugin.cpp)
+-------------------------------------------------------
+GrailEntryOf    item -> tile, by quality and table row
+Accepts         whether an item may be put in (one copy per tile and ethereal state)
+RecordMatches   whether a stored record still is the item its tile says  <- the base code check
+RebuildStored   rebuilds the tiles; records that fail RecordMatches go to Lost items
+BuildLost       builds the Lost items menu
+BuildLists      builds the tiles from the game's UniqueItems / SetItems tables (entry.code)
+LootDecide      ground loot rules; trusts a row only when the item's base is the row's base
