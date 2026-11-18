@@ -570,6 +570,19 @@ int main(int argc, char** argv) {
 		command.plugin      = &context;
 		g_console(nullptr, &command, g_consoleUserData);
 		if (g_consoleLines == 0) Fail("the console command wrote nothing");
+		// 'exalted legend' writes legend.txt beside codes.txt, and replaces it the next time.
+		if (hasCopy) {
+			DeleteFileW((storeDir + L"\\legend.txt").c_str());
+			command.input = "exalted legend";
+			command.args  = " legend";
+			for (int i = 0; i < 2; ++i) g_console(nullptr, &command, g_consoleUserData);
+			std::string legend;
+			if (!ReadAll(storeDir + L"\\legend.txt", legend)) Fail("'exalted legend' wrote no legend.txt");
+			else if (legend.find("Exalted Items") != 0 || legend.find("Materials") == std::string::npos || legend.find("Body armor") == std::string::npos) Fail("legend.txt lacks its parts");
+			else printf("legend.txt: %zu bytes\n", legend.size());
+			command.input = "exalted";
+			command.args  = "";
+		}
 		if (!exalted.empty() && g_missLines != pickerHooks) Fail("the console command does not show the failed picks");
 		const bool setHooked = [] { for (const Hooked& hook : g_hooks) if (hook.rva == kSetPick) return true; return false; }();
 		if (!exalted.empty() && g_setMissLogs != (setHooked ? 1 : 0)) Fail("a failed set pick is logged once, a failed unique pick never");

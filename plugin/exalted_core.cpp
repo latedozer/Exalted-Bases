@@ -932,6 +932,93 @@ int ExaltedLevel(const Bank& bank, int eliteLevel, const Config& config) {
 	return std::max(1, config.dropLevelMax - 3 * (kLevelTables - 1 - place));
 }
 
+// --- the legend ------------------------------------------------------------------------
+
+// A JSON string's text (without its quotes) with its escapes undone.
+std::string JsonUnescape(std::string_view text) {
+	std::string out;
+	for (size_t i = 0; i < text.size(); ++i) {
+		if (text[i] != '\\' || i + 1 >= text.size()) {
+			out += text[i];
+			continue;
+		}
+		const char c = text[++i];
+		if (c == 'n') {
+			out += ' ';
+		} else if (c == 't') {
+			out += ' ';
+		} else if (c == 'u' && i + 4 < text.size()) {
+			const unsigned long cp = strtoul(std::string(text.substr(i + 1, 4)).c_str(), nullptr, 16);
+			i += 4;
+			if (cp < 0x80) {
+				out += static_cast<char>(cp);
+			} else if (cp < 0x800) {
+				out += static_cast<char>(0xC0 | (cp >> 6));
+				out += static_cast<char>(0x80 | (cp & 0x3F));
+			} else {
+				out += static_cast<char>(0xE0 | (cp >> 12));
+				out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+				out += static_cast<char>(0x80 | (cp & 0x3F));
+			}
+		} else {
+			out += c; // \" \\ \/
+		}
+	}
+	return out;
+}
+
+// One legend line per exalted base of this bank (its weapons, then its armor).
+void AddLegend(const Bank& bank, const std::map<std::string, std::string>& codes, const std::map<std::string, std::string>& englishNames, std::vector<LegendEntry>& legend) {
+	std::map<std::string, std::string> typeNames;
+	const int cTypeCode = bank.itemTypes.Col("Code"), cTypeName = bank.itemTypes.Col("ItemType");
+	if (cTypeCode >= 0 && cTypeName >= 0) {
+		for (const auto& row : bank.itemTypes.rows) {
+			typeNames.emplace(Lower(std::string(TrimView(bank.itemTypes.Get(row, cTypeCode)))), std::string(TrimView(bank.itemTypes.Get(row, cTypeName))));
+		}
+	}
+	std::set<std::string> uniqueCodes, setCodes;
+	for (const Family& family : bank.families) {
+		(family.sets ? setCodes : uniqueCodes).insert(family.code);
+	}
+	for (const ItemTable* items : { &bank.weapons, &bank.armor }) {
+		const Table& t     = items->table;
+		const int    cType = t.Col("type"), cLevel = t.Col("level"), cLevelReq = t.Col("levelreq");
+		for (const EliteFamily& family : items->families) {
+			const auto code = codes.find(family.eliteCode);
+			if (code == codes.end() || code->second.empty()) {
+				continue;
+			}
+			const int row = items->FindCode(code->second);
+			if (row < 0) {
+				continue;
+			}
+			const auto& cells = t.rows[static_cast<size_t>(row)];
+			LegendEntry entry;
+			entry.exalted  = code->second;
+			entry.elite    = family.eliteCode;
+			entry.weapon   = items->isWeapons;
+			entry.type     = Lower(Trim(t.Get(cells, cType)));
+			entry.level    = ToInt(t.Get(cells, cLevel));
+			entry.levelReq = ToInt(t.Get(cells, cLevelReq));
+			entry.unique   = uniqueCodes.count(entry.exalted) != 0;
+			entry.set      = setCodes.count(entry.exalted) != 0;
+			const auto typeName = typeNames.find(entry.type);
+			entry.typeName = typeName != typeNames.end() ? typeName->second : entry.type;
+			const auto name = englishNames.find(family.eliteCode);
+			if (name != englishNames.end()) {
+				entry.name = name->second;
+			} else {
+				std::string plain = t.Get(cells, items->cName);
+				if (StartsWith(plain, kRowMarker)) {
+					plain = plain.substr(strlen(kRowMarker));
+				}
+				entry.name = "(" + plain + ")"; // the table's own name: the game's strings could not be read
+			}
+			legend.push_back(std::move(entry));
+		}
+	}
+}
+
 void AddItems(Bank& bank, ItemTable& items, const Config& config, const std::map<std::string, std::string>& codes, const std::map<std::string, std::string>& nameKeys) {
 	Table&                    t       = items.table;
 	const std::vector<double>              medians = StatMedians(items);
@@ -2616,6 +2703,7 @@ Summary Run(Io& io, const Config& settings) {
 
 	std::map<std::string, std::string> codes;    // elite code -> exalted code
 	std::map<std::string, std::string> nameKeys; // elite code -> string key of the exalted name
+	std::map<std::string, std::string> englishNames; // elite code -> the exalted name in English (for the legend)
 	std::string crystalCode, crystalNameKey, desecrationCode, desecrationNameKey;
 	std::vector<std::pair<std::string, std::string>> extraFiles; // adjusted files that are not tables: the crystal's picture and model
 	std::vector<std::string> keptFiles;                          // the same, already stored by an earlier start
@@ -2764,6 +2852,9 @@ Summary Run(Io& io, const Config& settings) {
 							at = close + 1;
 						}
 						object += member.value.substr(0, at) + prefix + member.value.substr(at);
+						if (member.key == "enUS") {
+							englishNames[entry.first] = config.namePrefix + JsonUnescape(std::string_view(member.value).substr(at, member.value.size() - 1 - at));
+						}
 					} else {
 						object += member.value;
 					}
@@ -3097,6 +3188,9 @@ Summary Run(Io& io, const Config& settings) {
 				(family.sets ? sets : uniques) += 1;
 				summary.families.push_back(family);
 			}
+			if (summary.legend.empty()) {
+				AddLegend(bank, codes, englishNames, summary.legend);
+			}
 			if (!desecrationCode.empty()) {
 				AddCrystal(io, bank, desecrationCode, desecrationNameKey, summary.desecrationSlots > 0, "Shard of Desecration", bank.desecrationCode);
 			}
@@ -3188,6 +3282,133 @@ Summary Run(Io& io, const Config& settings) {
 	}
 	summary.ok = true;
 	return summary;
+}
+
+// Kinds of item in the order the legend lists them, with the item types each one takes.
+// A type not named here gets a group of its own, under its name in itemtypes.txt.
+struct LegendGroup {
+	const char* title;
+	const char* types; // item type codes, space separated
+};
+constexpr LegendGroup kLegendGroups[] = {
+	{ "Body armor", "tors" },
+	{ "Helms (with circlets, druid pelts and barbarian helms)", "helm circ pelt phlm" },
+	{ "Shields (with paladin shields and necromancer heads)", "shie ashd head" },
+	{ "Gloves", "glov" },
+	{ "Belts", "belt" },
+	{ "Boots", "boot" },
+	{ "Axes", "axe" },
+	{ "Throwing axes", "taxe" },
+	{ "Clubs, maces and hammers", "club mace hamm" },
+	{ "Scepters", "scep" },
+	{ "Swords", "swor" },
+	{ "Daggers", "knif" },
+	{ "Throwing knives", "tkni" },
+	{ "Spears", "spea" },
+	{ "Polearms", "pole" },
+	{ "Javelins", "jave" },
+	{ "Bows", "bow" },
+	{ "Crossbows", "xbow" },
+	{ "Staves", "staf" },
+	{ "Wands", "wand" },
+	{ "Assassin claws", "h2h h2h2" },
+	{ "Amazon bows, spears and javelins", "abow aspe ajav" },
+	{ "Sorceress orbs", "orb" },
+	{ "Warlock grimoires", "grim" },
+};
+
+std::string FormatLegend(const Summary& summary, const Config& config, const std::string& heading) {
+	const char* const eol = "\r\n";
+	std::string       out;
+	for (size_t start = 0; start < heading.size();) {
+		const size_t end = std::min(heading.find('\n', start), heading.size());
+		out += heading.substr(start, end - start) + eol;
+		start = end + 1;
+	}
+	// Names are padded to one width (counted in characters, not bytes, so accents line up).
+	auto width = [](const std::string& text) {
+		size_t n = 0;
+		for (const char c : text) {
+			n += (static_cast<unsigned char>(c) & 0xC0) != 0x80 ? 1 : 0;
+		}
+		return n;
+	};
+	size_t nameWidth = strlen("Exalted item");
+	for (const LegendEntry& entry : summary.legend) {
+		nameWidth = std::max(nameWidth, width(entry.name));
+	}
+	nameWidth = std::max({ nameWidth, width(config.crystalName), width(config.desecrationName) });
+	auto pad = [&](const std::string& text, size_t to) { return text + std::string(to > width(text) ? to - width(text) : 0, ' '); };
+
+	out += eol;
+	out += "Materials";
+	out += eol;
+	out += "  " + pad("Item", nameWidth) + "  Code  Word in exalted-items.toml" + eol;
+	if (!summary.crystalCode.empty()) {
+		out += "  " + pad(config.crystalName, nameWidth) + "  " + pad(summary.crystalCode, 4) + "  crystal" + eol;
+	}
+	if (!summary.desecrationCode.empty()) {
+		out += "  " + pad(config.desecrationName, nameWidth) + "  " + pad(summary.desecrationCode, 4) + "  desecration" + eol;
+	}
+	if (summary.crystalCode.empty() && summary.desecrationCode.empty()) {
+		out += "  (both are turned off)";
+		out += eol;
+	}
+
+	// Group the bases: the known kinds in their order, then any other type by its name
+	// (armor before weapons).
+	std::vector<std::pair<std::string, std::vector<const LegendEntry*>>> groups;
+	auto groupFor = [&](const std::string& title) -> std::vector<const LegendEntry*>& {
+		for (auto& group : groups) {
+			if (group.first == title) {
+				return group.second;
+			}
+		}
+		groups.emplace_back(title, std::vector<const LegendEntry*>());
+		return groups.back().second;
+	};
+	for (const LegendGroup& group : kLegendGroups) {
+		groupFor(group.title);
+	}
+	std::map<std::pair<bool, std::string>, std::vector<const LegendEntry*>> others;
+	for (const LegendEntry& entry : summary.legend) {
+		const LegendGroup* known = nullptr;
+		for (const LegendGroup& group : kLegendGroups) {
+			const std::string types = std::string(" ") + group.types + " ";
+			if (types.find(" " + entry.type + " ") != std::string::npos) {
+				known = &group;
+				break;
+			}
+		}
+		if (known != nullptr) {
+			groupFor(known->title).push_back(&entry);
+		} else {
+			others[{ entry.weapon, entry.typeName }].push_back(&entry);
+		}
+	}
+	for (auto& other : others) {
+		groupFor(other.first.second) = std::move(other.second);
+	}
+
+	for (auto& group : groups) {
+		if (group.second.empty()) {
+			continue;
+		}
+		std::sort(group.second.begin(), group.second.end(), [](const LegendEntry* a, const LegendEntry* b) {
+			return a->levelReq != b->levelReq ? a->levelReq < b->levelReq : a->name < b->name;
+		});
+		out += eol;
+		out += group.first;
+		out += eol;
+		out += "  " + pad("Exalted item", nameWidth) + "  Code  Elite  Req  Can drop as" + eol;
+		for (const LegendEntry* entry : group.second) {
+			std::string drops = entry->unique && entry->set ? "unique, set" : entry->unique ? "unique" : entry->set ? "set" : "-";
+			char        req[8];
+			snprintf(req, sizeof(req), "%3d", entry->levelReq);
+			out += "  " + pad(entry->name, nameWidth) + "  " + pad(entry->exalted, 4) + "  " + pad(entry->elite, 5) + "  " + req + "  " + drops + eol;
+		}
+	}
+	return out;
 }
 
 #ifdef EXALTED_SELF_TEST

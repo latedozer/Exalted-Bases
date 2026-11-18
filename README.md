@@ -12,7 +12,7 @@ above elite, called Exalted, and the Restoration Crystal that upgrades and resto
 - No game art or data is included. Pictures are made from the installed game when it starts.
 
 In the game and in its file names the plugin is called **Exalted Items**
-(`d2rl-exalted-items.dll`, `exalted-items.toml`, console command `exalted`).
+(`d2rl-exalted-items.dll`, `exalted-items.toml`, console command `exalted`; `exalted legend` writes every item code to `legend.txt`).
 
 ## Documents
 

@@ -133,6 +133,13 @@ The tier is rebuilt from your mods every time the game starts.
 
 Type `exalted` in the game console. It shows what was built and how often it was used.
 
+## Item codes
+
+Type `exalted legend` in the game console. It writes `legend.txt` next to `codes.txt` (see
+below), listing every exalted item and material with its item code. Use those codes in your own
+cube recipes or loot tables. The codes belong to your computer; on another computer with other
+mods a few can differ, so run the command there too.
+
 ## Be careful
 
 - **Characters holding exalted items or crystals need the plugin.** Remove those items from

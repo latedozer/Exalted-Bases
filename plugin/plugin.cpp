@@ -27,8 +27,15 @@
 
 namespace {
 
+constexpr const char* kPluginVersion = "0.13.0";
+
 const D2RL::PluginContext* g_ctx = nullptr;
 char                       g_status[2000] = "Exalted Items: not run yet.";
+// What 'exalted legend' writes: this start's bases and materials, and where the file goes
+// (beside codes.txt). Empty until a start has built the tables.
+exalted::Summary           g_legend;
+exalted::Config            g_legendConfig;
+std::wstring               g_legendPath;
 exalted::Config            g_config;
 
 void LogF(const char* format, ...) {
@@ -1718,13 +1725,59 @@ void __cdecl OnGameJoined(const D2RL::PluginContext*, const D2RL::Lifecycle::Gam
 	}
 }
 
+// 'exalted legend': the item code of every exalted base and material, written to legend.txt
+// beside codes.txt (replaced each time), from what this start built.
+void WriteLegend() {
+	if (g_legendPath.empty() || g_legend.legend.empty()) {
+		g_ctx->WriteConsoleMessage("Exalted Items: no legend - no exalted items were made this start (see 'exalted').");
+		return;
+	}
+	SYSTEMTIME now {};
+	GetLocalTime(&now);
+	char heading[1200];
+	snprintf(heading, sizeof(heading),
+	         "Exalted Items %s: item code legend\n"
+	         "Written %04u-%02u-%02u %02u:%02u by the 'exalted legend' console command, from the tables built at this game start.\n"
+	         "Codes are this computer's, kept in codes.txt in this folder. A code never changes once it is there. On another\n"
+	         "computer with other mods a few codes can differ: run 'exalted legend' there to see its own.\n"
+	         "Use a code wherever the game wants an item code (cube recipes, treasure classes). The elite items keep their own codes.\n"
+	         "Req = required level. \"Can drop as\" = the item qualities the exalted base can drop with besides normal, magic and rare.",
+	         kPluginVersion, now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute);
+	const std::string  text = exalted::FormatLegend(g_legend, g_legendConfig, heading);
+	const std::wstring temp = g_legendPath + L".xlt-tmp";
+	const HANDLE       file = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	DWORD              written = 0;
+	const bool         ok      = file != INVALID_HANDLE_VALUE && WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) != 0 && written == text.size();
+	if (file != INVALID_HANDLE_VALUE) {
+		CloseHandle(file);
+	}
+	char line[900];
+	if (!ok || MoveFileExW(temp.c_str(), g_legendPath.c_str(), MOVEFILE_REPLACE_EXISTING) == 0) {
+		const DWORD error = GetLastError();
+		DeleteFileW(temp.c_str());
+		snprintf(line, sizeof(line), "Exalted Items: could not write %s (error %lu)", Narrow(g_legendPath).c_str(), error);
+	} else {
+		snprintf(line, sizeof(line), "Exalted Items: legend of %d exalted items and %d materials written to %s", static_cast<int>(g_legend.legend.size()),
+		         (g_legend.crystalCode.empty() ? 0 : 1) + (g_legend.desecrationCode.empty() ? 0 : 1), Narrow(g_legendPath).c_str());
+	}
+	LogF("%s", line);
+	g_ctx->WriteConsoleMessage(line);
+}
+
 D2RL::ConsoleCommandResult __cdecl OnConsole(D2R::Game::Client*, const D2RL::ConsoleCommandContext* command, void*) noexcept {
 	const char* args = command != nullptr && command->args != nullptr ? command->args : "";
 	while (*args == ' ') {
 		++args;
 	}
+	char line[700];
+	if (_strnicmp(args, "legend", 6) == 0 && (args[6] == '\0' || args[6] == ' ')) {
+		WriteLegend();
+		return D2RL::ConsoleCommandResult::Handled;
+	}
 	g_ctx->WriteConsoleMessage(g_status);
-	char                     line[700];
+	if (!g_legendPath.empty()) {
+		g_ctx->WriteConsoleMessage("  'exalted legend' writes every exalted item and its item code to legend.txt beside codes.txt");
+	}
 	static const char* const kindName[2] = { "unique", "set" };
 	for (int kind = 0; kind < 2; ++kind) {
 		if (g_originalPick[kind] != nullptr) {
@@ -1824,7 +1877,7 @@ constexpr D2RL::PluginInfo kPluginInfo {
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
 	.id          = "exalted-items",
 	.name        = "Exalted Items",
-	.version     = "0.12.0",
+	.version     = kPluginVersion,
 	.author      = "Latedozer",
 	.description = "A fourth item tier above elite, built from the active mod's own item tables.",
 	.flags       = D2RL::PluginFlags::Shared | D2RL::PluginFlags::NativeHooks,
@@ -1925,6 +1978,11 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	}
 	InstallPickers(context, summary.families);
 	InstallStrip(context, summary);
+	g_legend.legend          = summary.legend;
+	g_legend.crystalCode     = summary.crystalCode;
+	g_legend.desecrationCode = summary.desecrationCode;
+	g_legendConfig           = config;
+	g_legendPath             = pluginFolder + L"\\legend.txt";
 	char loot[160];
 	if (summary.rungs > 0) {
 		snprintf(loot, sizeof(loot), "%d loot rows added above the game's own, and %d high-level rows pointed at them", summary.rungs, summary.repointed);

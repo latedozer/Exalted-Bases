@@ -67,6 +67,11 @@ gen off enabled=0 >/dev/null
 note "generator: unique and set tables are never written"
 [ -z "$(find "$N" -iname 'uniqueitems.txt' -o -iname 'setitems.txt' -o -iname 'sets.txt')" ] && echo "  none" || bad "a unique or set table was written"
 
+note "item code legend: every base and material once, with its elite code and English name"
+gen legend legend="$N/legend.txt" savecodes="$N/legend.codes" >/dev/null
+python3 test/check_legend.py "$N/legend.txt" "$N/legend.codes" "$N/legend/local/lng/strings/item-names.json" | tail -4 | sed 's/^/  /'
+python3 test/check_legend.py "$N/legend.txt" "$N/legend.codes" "$N/legend/local/lng/strings/item-names.json" >/dev/null || bad "legend"
+
 note "exalted base codes"
 gen c1 savecodes="$N/codes1.txt" >/dev/null
 gen c2 codes="$N/codes1.txt" savecodes="$N/codes2.txt" >/dev/null

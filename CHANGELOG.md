@@ -3,6 +3,15 @@
 Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
 for them.
 
+## 0.13.0 (2026-11-17)
+
+- New console command `exalted legend`: writes `legend.txt` beside `codes.txt` with the item
+  code of every exalted base and of the two materials. Bases are grouped by kind and listed by
+  required level, each with its English name, its elite base's code, its required level and
+  whether it can drop as a unique or set item. The file is replaced each time the command runs
+  and always matches this computer's codes. Nothing else changed.
+- Typing `exalted` alone shows a line pointing to the new command.
+
 ## 0.12.0 (2026-11-15)
 
 - New item: the Shard of Desecration, a Worldstone Shard tinted red. It is the material that

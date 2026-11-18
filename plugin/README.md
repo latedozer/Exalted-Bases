@@ -206,6 +206,11 @@ and pass everything else through. The console command `exalted` lists how often 
 read, and how the unique and set hooks have been used. A directory listing still reports the
 mod's own file sizes.
 
+`exalted legend` writes `legend.txt` beside `codes.txt`: every exalted base (English name from
+the generated `item-names.json` entry, codes, required level, unique/set families) and the two
+materials, built by `FormatLegend` from `Summary::legend`, which `AddLegend` fills from the first
+data bank at start-up. `test/check_legend.py` checks it against codes.txt and item-names.json.
+
 ## How the tier works
 
 - **Upgrade:** the cube's `exc` output turns an item into its row's `ubercode`. Pointing an
@@ -243,7 +248,8 @@ those items, then delete the DLL (and the `d2rloader/exalted-items` folder if yo
 - the tier choice is simulated against a merged list;
 - `test/scan_test.cpp` runs the picker search against a dumped game image;
 - `test/fake_host.cpp` is a stand-in loader that loads the real DLL under Wine with a made-up
-  game image and item table, presses both hooks and runs the console command;
+  game image and item table, presses both hooks and runs the console command (and
+  `exalted legend`, which must write legend.txt);
 - `test/same_output.sh <reference source dir>` builds an earlier version of the generator and
   checks that the current one writes the same files byte for byte (by default against
   `../exalted-plugin-0.9.0-backup`; set `REF=` to use another);

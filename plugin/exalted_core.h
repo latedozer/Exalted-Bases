@@ -231,6 +231,20 @@ inline int FamilyChoice(const uint32_t weights[kMaxFamilyBases], uint32_t roll) 
 	return -1;
 }
 
+// One line of the item code legend (the 'exalted legend' console command).
+struct LegendEntry {
+	std::string exalted;     // exalted base code
+	std::string elite;       // elite base code
+	std::string name;        // English name of the exalted base (as the game shows it)
+	std::string type;        // item type code (weapons.txt / armor.txt "type")
+	std::string typeName;    // that type's name in itemtypes.txt
+	bool        weapon  = false;
+	int         level    = 0; // item level
+	int         levelReq = 0; // required level
+	bool        unique  = false; // can drop as a unique item
+	bool        set     = false; // can drop as a set item
+};
+
 struct Summary {
 	bool        ok           = false;
 	std::string error;
@@ -262,8 +276,14 @@ struct Summary {
 	int         filesWritten = 0;
 	std::vector<std::string> files; // every adjusted file of this run (relative paths)
 	int         banks        = 0;
+	std::vector<LegendEntry> legend; // every exalted base of the first data bank
 };
 
 Summary Run(Io& io, const Config& config);
+
+// The legend as plain text (UTF-8, Windows line ends): the two materials, then every exalted
+// base grouped by kind, with its code, its elite base's code, its required level and whether
+// it can drop as a unique or set item. `heading` goes on top, line by line.
+std::string FormatLegend(const Summary& summary, const Config& config, const std::string& heading);
 
 }

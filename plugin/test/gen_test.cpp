@@ -127,7 +127,7 @@ int main(int argc, char** argv) {
 	io.base = argv[2];
 	io.out  = argv[3];
 	exalted::Config config;
-	std::string     saveCodes, saveFamilies;
+	std::string     saveCodes, saveFamilies, saveLegend;
 	int             pickTest = 0;
 	// The tests written before the crystal run without it; "crystal=1" turns it on.
 	config.crystalEnabled = false;
@@ -149,6 +149,7 @@ int main(int argc, char** argv) {
 		if (key == "codes") ReadCodes(eq + 1, config.savedCodes);
 		if (key == "savecodes") saveCodes = eq + 1;
 		if (key == "families") saveFamilies = eq + 1;
+		if (key == "legend") saveLegend = eq + 1;
 		if (key == "picktest") pickTest = value;
 		if (key == "upgradereq") config.upgradeLevelReq = value;
 		if (key == "zone") config.terrorZoneOnly = value != 0;
@@ -180,6 +181,14 @@ int main(int argc, char** argv) {
 		FILE* f = fopen(saveCodes.c_str(), "wb");
 		if (f != nullptr) {
 			for (const auto& code : s.codes) fprintf(f, "%s=%s\n", code.first.c_str(), code.second.c_str());
+			fclose(f);
+		}
+	}
+	if (!saveLegend.empty()) {
+		FILE* f = fopen(saveLegend.c_str(), "wb");
+		if (f != nullptr) {
+			const std::string text = exalted::FormatLegend(s, config, "Exalted Items: item code legend (test)");
+			fwrite(text.data(), 1, text.size(), f);
 			fclose(f);
 		}
 	}
