@@ -158,6 +158,24 @@ Shard `xa1`; in tables without it, an essence), with its own code, kept in `code
   gets no marker and no restoring. (500 is below 511, the most a nine-bit stat number in an
   item save can hold.)
 
+## The loot filter's Exalted box
+
+The game's loot filter knows three tiers (`equipmentQuality`: normal, exceptional, elite; 0 to
+2, with 3 as "none", which a rule refuses). It gets a base's tier from the item row's three
+family codes, so an exalted base comes out as normal. With `[loot_filter] exalted_box`:
+
+- the core adds a box `ExaltedQualityChbx` to `global/ui/layouts/lootfilteritempanelhd.json`
+  (a copy of the Elite box, 400 to its right, sending `UpdateQualityFilter:exalted`);
+- the plugin points four calls of the game at itself, each through a jump in unused padding
+  (0x3ed270, 0x3ed280, 0x3ed290): the tier of a dropped item (0x1c1235) and of an entry in the
+  rule panel's list (0x151d706) give 4 for an exalted base; the list of tier names, built on
+  first use (0x210156), gets `exalted` = 4, which serves the rule file's reader and writer and
+  the boxes' click messages; the rule panel's tier -> box table (0x14acd16) gets the new box.
+
+Keeping the tier in a rule, matching and ticking the box when a rule opens are the game's own
+code, driven by those two tables. Known game image only; every place is checked first. The
+Chronicle panel's tier calls are left alone.
+
 ## Unique and set items on exalted bases
 
 The game picks a unique or a set piece for a new item by the item's own code, so an exalted

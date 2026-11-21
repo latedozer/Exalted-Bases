@@ -3,6 +3,24 @@
 Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
 for them.
 
+## 0.14.0 (2026-11-21)
+
+- The game's loot filter gets a fourth Quality box in a rule's screen, beside Normal,
+  Exceptional and Elite: **Exalted**. Tick it the way you tick the others. In a profile's code
+  the tier is written `"exalted"`.
+- An exalted base now counts as that tier in the filter. Before, the filter saw it as a Normal
+  base, because the game works a base's tier out from its three family codes and an exalted
+  base is none of them. So a rule that hides Normal items no longer hides exalted ones, and a
+  rule that ticks only the game's three tiers leaves exalted items alone: tick Exalted in it
+  if it should cover them.
+- A profile that uses the box needs the plugin. Without it the game does not know the word
+  `exalted` in a rule.
+- Settings: `[loot_filter] exalted_box` (default true) and `label` (the text beside the box).
+  Off: no box, and the filter sees exalted bases as Normal, as before.
+- Only in the game build the plugin was written against. In another build the box is left
+  out of effect and the log says so.
+- Not changed: the Chronicle's item list still counts an exalted base as a Normal one.
+
 ## 0.13.0 (2026-11-17)
 
 - New console command `exalted legend`: writes `legend.txt` beside `codes.txt` with the item

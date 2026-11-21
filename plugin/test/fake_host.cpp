@@ -30,7 +30,7 @@ namespace {
 
 constexpr uint64_t kSetPick = 0x58c2f0, kUniquePick = 0x443910; // in the dump
 constexpr uint64_t kRowThunk = 0x314110, kLevelThunk = 0x36ccf0; // where the game's own lookups are in the dump
-constexpr size_t   kImageSize = 0x600000, kRowSize = 0x1c0, kCodeAt = 0x80, kVersionAt = 0x106;
+constexpr size_t   kImageSize = 0x2b00000, kRowSize = 0x1c0, kCodeAt = 0x80, kVersionAt = 0x106;
 
 uint8_t*    g_image = nullptr;
 std::string g_config;
@@ -98,6 +98,59 @@ uint64_t ModelApply(int kind, void* item, void* third, void* fourth, int index, 
 	return static_cast<uint64_t>(amount);
 }
 
+// --- stand-ins for the loot filter's Exalted box (plugin.cpp) ---------------------------------
+constexpr uint64_t kTierOf = 0x371d80, kTierNames = 0x20d830, kTierBoxes = 0x173940, kFindWidget = 0x855c90, kToggleType = 0x882be0;
+constexpr uint64_t kTierSite = 0x1c1235, kEntrySite = 0x151d706, kNamesSite = 0x210156, kBoxesSite = 0x14acd16, kFilterCaves = 0x3ed270;
+std::vector<std::pair<std::string, int>> g_seenNames; // what the game's "fill the name list" was handed
+std::vector<std::pair<int, void*>>       g_seenBoxes; // what the game's "fill the box table" was handed
+void*                                    g_seenTable = nullptr;
+bool                                     g_layoutHasBox = true;
+std::string                              g_askedWidget;
+void*                                    g_askedPanel = nullptr;
+struct FakeType {
+	void* a;
+	void* b;
+	FakeType* parent; // +0x10
+};
+FakeType g_toggleBase { nullptr, nullptr, nullptr };
+FakeType g_boxType { nullptr, nullptr, &g_toggleBase };
+void*    FakeOwnType(void*) { return &g_boxType; }
+void*    g_fakeVtable[16];
+struct FakeWidget {
+	void** vtable;
+} g_fakeBox { g_fakeVtable };
+uint64_t HostTierNames(void*, uint8_t* begin, uint8_t* end) {
+	g_seenNames.clear();
+	for (uint8_t* at = begin; at < end; at += 0x30) {
+		const char* text;
+		uint64_t    length;
+		int32_t     tier;
+		memcpy(&text, at, 8);
+		memcpy(&length, at + 8, 8);
+		memcpy(&tier, at + 0x28, 4);
+		g_seenNames.emplace_back(std::string(text, static_cast<size_t>(length)), tier);
+	}
+	return 0x77;
+}
+uint64_t HostTierBoxes(void* table, uint8_t* begin, uint8_t* end) {
+	g_seenBoxes.clear();
+	g_seenTable = table;
+	for (uint8_t* at = begin; at < end; at += 0x10) {
+		int32_t tier;
+		void*   box;
+		memcpy(&tier, at, 4);
+		memcpy(&box, at + 8, 8);
+		g_seenBoxes.emplace_back(tier, box);
+	}
+	return 0x78;
+}
+void* HostFindWidget(void* panel, const char* name) {
+	g_askedPanel  = panel;
+	g_askedWidget = name;
+	return g_layoutHasBox ? &g_fakeBox : nullptr;
+}
+void* HostToggleType() { return &g_toggleBase; }
+
 void Fail(const char* what) {
 	printf("FAIL: %s\n", what);
 	++g_failures;
@@ -138,8 +191,12 @@ bool __cdecl WriteConfig(const D2RL::PluginContext*, const char* text) noexcept 
 	g_config = text != nullptr ? text : "";
 	return true;
 }
-bool __cdecl PatchBytes(const D2RL::PluginContext*, uint64_t, const void*, uint32_t, const void*, uint32_t) noexcept {
-	return false;
+int g_patches = 0;
+bool __cdecl PatchBytes(const D2RL::PluginContext*, uint64_t rva, const void* expected, uint32_t expectedSize, const void* bytes, uint32_t size) noexcept {
+	if (g_image == nullptr || rva + size > kImageSize || expectedSize > size || memcmp(g_image + rva, expected, expectedSize) != 0) return false;
+	memcpy(g_image + rva, bytes, size);
+	++g_patches;
+	return true;
 }
 bool __cdecl PatchFill(const D2RL::PluginContext*, uint64_t, const void*, uint32_t, uint8_t, uint32_t) noexcept {
 	return false;
@@ -265,6 +322,20 @@ bool BuildImage(const char* dumpPath) {
 	put(kPropertyCount, { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0xe8, 0, 0, 0, 0, 0x48, 0x83, 0xc4, 0x20, 0x5b, 0xc3 }); // push rbx; sub rsp,20h; call ...; add rsp,20h; pop rbx; ret
 	PointCall(kPropertyCount + 6, kPropertyCount + 0x40);
 	Thunk(kPropertyCount + 0x40, reinterpret_cast<void*>(&HostPropertyCount));
+	// The loot filter's Exalted box: the game's tier routine whole, the four calls the plugin
+	// redirects, the padding its jumps go into and the first bytes of the routines it checks.
+	f = fopen(dumpPath, "rb");
+	if (f == nullptr) return false;
+	bool filter = true;
+	for (const auto& part : { std::pair<uint64_t, size_t> { kTierOf, 0x5d }, std::pair<uint64_t, size_t> { kTierSite, 5 }, std::pair<uint64_t, size_t> { kEntrySite, 5 },
+	                          std::pair<uint64_t, size_t> { kNamesSite, 5 }, std::pair<uint64_t, size_t> { kBoxesSite, 5 }, std::pair<uint64_t, size_t> { kFilterCaves, 0x40 },
+	                          std::pair<uint64_t, size_t> { kTierNames, 12 }, std::pair<uint64_t, size_t> { kTierBoxes, 12 }, std::pair<uint64_t, size_t> { kFindWidget, 12 },
+	                          std::pair<uint64_t, size_t> { kToggleType, 12 } }) {
+		fseek(f, static_cast<long>(part.first), SEEK_SET);
+		filter = filter && fread(g_image + part.first, 1, part.second, f) == part.second;
+	}
+	fclose(f);
+	if (!filter) return false;
 	put(kUnitStat, { 0xff, 0x25, 0x10, 0, 0, 0 });                                                 // jmp [rip+10h]
 	void* stat = reinterpret_cast<void*>(&HostUnitStat);
 	memcpy(g_image + kUnitStat + 6 + 0x10, &stat, 8);
@@ -349,6 +420,7 @@ int main(int argc, char** argv) {
 		printf("cannot read the config %s\n", argv[4]);
 		return 2;
 	}
+	const bool withStampedImage = strcmp(argv[5], "none") != 0 && strncmp(argv[5], "search:", 7) != 0;
 	if (!BuildImage(argv[5])) {
 		printf("cannot build the stand-in game image from %s\n", argv[5]);
 		return 2;
@@ -430,6 +502,111 @@ int main(int argc, char** argv) {
 	printf("codes.txt: %zu bytes; hooks installed: %zu\n", codes.size(), g_hooks.size());
 	int pickerHooks = 0;
 	for (const Hooked& hook : g_hooks) pickerHooks += hook.rva == kSetPick || hook.rva == kUniquePick ? 1 : 0;
+
+	// 1c. The loot filter's Exalted box: the four calls go to the plugin, an exalted base is
+	//     tier 4 and any other base what the game's own routine says, "exalted" is the fourth
+	//     name, and the layout's box is the fourth in the panel's table.
+	{
+		const auto callsCave = [](uint64_t site, uint64_t cave) {
+			int32_t rel;
+			memcpy(&rel, g_image + site + 1, 4);
+			return g_image[site] == 0xe8 && site + 5 + static_cast<int64_t>(rel) == cave && g_image[cave] == 0xff && g_image[cave + 1] == 0x25;
+		};
+		std::string layoutCopy;
+		const bool  boxInLayout = ReadAll(genDir + L"\\global\\ui\\layouts\\lootfilteritempanelhd.json", layoutCopy) && layoutCopy.find("ExaltedQualityChbx") != std::string::npos;
+		const bool  redirected  = callsCave(kTierSite, 0x3ed270) && callsCave(kEntrySite, 0x3ed270) && callsCave(kNamesSite, 0x3ed280) && callsCave(kBoxesSite, 0x3ed290);
+		const char* wantBox     = getenv("FAKE_FILTERBOX"); // "0": the settings turn the box off
+		const bool  expected    = hasCopy && withStampedImage && (wantBox == nullptr || strcmp(wantBox, "0") != 0);
+		printf("loot filter: the layout copy %s the Exalted box; the game's four calls %s (%d code changes)\n", boxInLayout ? "has" : "does not have", redirected ? "go to the plugin" : "are the game's own", g_patches);
+		if (expected && !boxInLayout) Fail("the rule panel's layout copy has no Exalted box");
+		if (expected && !redirected) Fail("the loot filter's calls were not redirected");
+		if (!expected && (redirected || g_patches != 0)) Fail("the loot filter's code was changed although the box is off or the image unknown");
+		if (!expected && wantBox != nullptr && boxInLayout) Fail("the layout got the box although the setting is off");
+		if (redirected) {
+			Thunk(kTierNames, reinterpret_cast<void*>(&HostTierNames));
+			Thunk(kTierBoxes, reinterpret_cast<void*>(&HostTierBoxes));
+			Thunk(kFindWidget, reinterpret_cast<void*>(&HostFindWidget));
+			Thunk(kToggleType, reinterpret_cast<void*>(&HostToggleType));
+			g_fakeVtable[0x58 / 8] = reinterpret_cast<void*>(&FakeOwnType);
+			// tiers: the first exalted code of codes.txt, and rows the game's own routine answers
+			std::string exaltedCode, eliteCode;
+			for (size_t at = 0; at < codes.size();) {
+				size_t end = codes.find('\n', at);
+				if (end == std::string::npos) end = codes.size();
+				const std::string line = codes.substr(at, end - at);
+				const size_t      eq   = line.find('=');
+				if (!line.empty() && line[0] != '#' && line[0] != '*' && eq != std::string::npos) {
+					eliteCode   = line.substr(0, eq);
+					exaltedCode = line.substr(eq + 1);
+					while (!exaltedCode.empty() && (exaltedCode.back() == '\r' || exaltedCode.back() == ' ')) exaltedCode.pop_back();
+					break;
+				}
+				at = end + 1;
+			}
+			const auto four = [](const std::string& code) {
+				char c[4] = { ' ', ' ', ' ', ' ' };
+				memcpy(c, code.data(), code.size() < 4 ? code.size() : 4);
+				uint32_t value;
+				memcpy(&value, c, 4);
+				return value;
+			};
+			using TierFn      = int (*)(const uint8_t*);
+			const TierFn tier = reinterpret_cast<TierFn>(g_image + 0x3ed270);
+			uint8_t      row[0x1c0] = {};
+			const auto   rowTier    = [&](uint32_t code, uint32_t norm, uint32_t uber, uint32_t ultra) {
+				memcpy(row + 0x80, &code, 4);
+				memcpy(row + 0x84, &norm, 4);
+				memcpy(row + 0x88, &uber, 4);
+				memcpy(row + 0x8c, &ultra, 4);
+				return tier(row);
+			};
+			const uint32_t x = four(exaltedCode), e = four(eliteCode), n = four("cap"), u = four("xap");
+			const int      tiers[4] = { rowTier(x, n, u, e), rowTier(e, n, x, e), rowTier(u, n, u, e), rowTier(n, n, u, e) };
+			printf("loot filter: tiers of an exalted base (%s), its elite base (%s), an exceptional and a normal one: %d %d %d %d\n", exaltedCode.c_str(), eliteCode.c_str(), tiers[0], tiers[1], tiers[2], tiers[3]);
+			if (exaltedCode.empty() || tiers[0] != 4 || tiers[1] != 2 || tiers[2] != 1 || tiers[3] != 0) Fail("the tiers are not 4, 2, 1, 0");
+			// names: the game's three, then "exalted" = 4
+			uint8_t names[3 * 0x30] = {};
+			const char* const three[3] = { "normal", "exceptional", "elite" };
+			for (int i = 0; i < 3; ++i) {
+				uint8_t*       entry    = names + i * 0x30;
+				const uint64_t pointer  = reinterpret_cast<uint64_t>(entry + 0x18), length = strlen(three[i]), capacity = 0x800000000000000fULL;
+				memcpy(entry, &pointer, 8);
+				memcpy(entry + 8, &length, 8);
+				memcpy(entry + 0x10, &capacity, 8);
+				memcpy(entry + 0x18, three[i], length + 1);
+				memcpy(entry + 0x28, &i, 4);
+			}
+			using FillFn = uint64_t (*)(void*, uint8_t*, uint8_t*);
+			const uint64_t namesResult = reinterpret_cast<FillFn>(g_image + 0x3ed280)(reinterpret_cast<void*>(0x5150), names, names + sizeof(names));
+			const bool     namesOk     = namesResult == 0x77 && g_seenNames.size() == 4 && g_seenNames[0] == std::make_pair(std::string("normal"), 0) && g_seenNames[1] == std::make_pair(std::string("exceptional"), 1)
+			                         && g_seenNames[2] == std::make_pair(std::string("elite"), 2) && g_seenNames[3] == std::make_pair(std::string("exalted"), 4);
+			printf("loot filter: the game's name list is filled with %zu names%s\n", g_seenNames.size(), namesOk ? ": normal 0, exceptional 1, elite 2, exalted 4" : "");
+			if (!namesOk) Fail("the tier names handed to the game are not the game's three and exalted = 4");
+			// boxes: the panel's table is at panel + 0x1b8
+			static uint8_t panel[0x400];
+			uint8_t        boxes[3 * 0x10] = {};
+			void* const    gameBoxes[3]    = { reinterpret_cast<void*>(0xa0), reinterpret_cast<void*>(0xa1), reinterpret_cast<void*>(0xa2) };
+			for (int i = 0; i < 3; ++i) {
+				memcpy(boxes + i * 0x10, &i, 4);
+				memcpy(boxes + i * 0x10 + 8, &gameBoxes[i], 8);
+			}
+			const FillFn fillBoxes   = reinterpret_cast<FillFn>(g_image + 0x3ed290);
+			const uint64_t boxResult = fillBoxes(panel + 0x1b8, boxes, boxes + sizeof(boxes));
+			const bool     boxesOk   = boxResult == 0x78 && g_seenTable == panel + 0x1b8 && g_askedPanel == panel && g_askedWidget == "ExaltedQualityChbx" && g_seenBoxes.size() == 4
+			                       && g_seenBoxes[0] == std::make_pair(0, gameBoxes[0]) && g_seenBoxes[2] == std::make_pair(2, gameBoxes[2]) && g_seenBoxes[3] == std::make_pair(4, static_cast<void*>(&g_fakeBox));
+			printf("loot filter: the panel's table gets %zu boxes%s\n", g_seenBoxes.size(), boxesOk ? ", the fourth is the layout's Exalted box for tier 4" : "");
+			if (!boxesOk) Fail("the panel's box table is not the game's three and the Exalted box");
+			g_layoutHasBox = false; // a layout without the box
+			fillBoxes(panel + 0x1b8, boxes, boxes + sizeof(boxes));
+			if (g_seenBoxes.size() != 3) Fail("a layout without the Exalted box must leave the game's three boxes as they are");
+			g_layoutHasBox = true;
+			g_boxType.parent = nullptr; // a widget of that name that is not a toggle button
+			fillBoxes(panel + 0x1b8, boxes, boxes + sizeof(boxes));
+			if (g_seenBoxes.size() != 3) Fail("a widget that is not a toggle button must not be taken for the box");
+			g_boxType.parent = &g_toggleBase;
+			printf("loot filter: without the box in the layout, or with another kind of widget of that name, the game's three stay as they are\n");
+		}
+	}
 
 	// 1b. Turning a restored item back to elite: the plugin's hook on the property routine is
 	//     given the sign and has to take off exactly what a restore put on.

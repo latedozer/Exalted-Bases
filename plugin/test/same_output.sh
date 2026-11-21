@@ -36,7 +36,7 @@ one() {
 	mkdir -p "$W/ref-$name" "$W/new-$name"
 	"$N/gen_ref" "$data" "$VAN" "$W/ref-$name" "$@" families="$W/ref-$name.families" savecodes="$W/ref-$name.codes" > "$W/ref-$name.out" 2>&1
 	local refExit=$?
-	"$N/gen_test" "$data" "$VAN" "$W/new-$name" "$@" downgrade=off upgradereq=9 families="$W/new-$name.families" savecodes="$W/new-$name.codes" > "$W/new-$name.out" 2>&1
+	"$N/gen_test" "$data" "$VAN" "$W/new-$name" "$@" downgrade=off filterbox=0 upgradereq=9 families="$W/new-$name.families" savecodes="$W/new-$name.codes" > "$W/new-$name.out" 2>&1
 	local newExit=$?
 	CASES=$((CASES + 1))
 	FILES=$((FILES + $(find "$W/ref-$name" -type f | wc -l)))

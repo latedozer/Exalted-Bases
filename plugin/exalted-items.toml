@@ -102,6 +102,17 @@ stash_slot = true
 stash_slot_right = 4
 stash_slot_down = 3
 
+# The game's loot filter (the rule screen) gets a fourth Quality box beside Normal, Exceptional
+# and Elite: Exalted. Tick it in a rule the way you tick the others; in a rule's code the tier
+# is written "exalted". An exalted base then counts as that tier and no longer as Normal, so a
+# rule that names only the game's three tiers leaves exalted items alone.
+# A profile that uses the box needs this plugin: without it the game does not know the word.
+# false = no box, and the filter sees an exalted base as a Normal one (as before 0.14.0).
+[loot_filter]
+exalted_box = true
+# The text beside the box.
+label = "Exalted"
+
 # The Shard of Desecration: a red Worldstone Shard. In the cube it turns an exalted item back
 # into the same item on its elite base (the [recipes] downgrade recipe); in a recipe the word
 # "desecration" stands for it. It is made and dropped exactly like the crystal: the same bosses,

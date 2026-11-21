@@ -1,4 +1,4 @@
-# Exalted Items: user guide (v0.12.0)
+# Exalted Items: user guide (v0.14.0)
 
 Exalted Items adds a fourth tier of weapons and armor above elite, called Exalted.
 
@@ -77,6 +77,12 @@ back into the same item on its elite base. It replaces the El rune in that recip
 It drops exactly where the crystal does: from the same bosses in Hell, in the same loot rows,
 with the same chance. It stacks in the stash too. Its slot and the crystal's stand side by
 side, in the row under Baal's Eye and Mephisto's Brain with this mod set's stash.
+
+## Loot filter
+
+A rule in the game's loot filter has a fourth Quality box: **Exalted**, beside Normal,
+Exceptional and Elite. Exalted items count as that tier only, so a rule that should cover them
+needs the box ticked. A profile that uses the box needs the plugin installed.
 
 ## Uniques and sets
 

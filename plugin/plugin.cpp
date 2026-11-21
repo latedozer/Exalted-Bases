@@ -27,7 +27,7 @@
 
 namespace {
 
-constexpr const char* kPluginVersion = "0.13.0";
+constexpr const char* kPluginVersion = "0.14.0";
 
 const D2RL::PluginContext* g_ctx = nullptr;
 char                       g_status[2000] = "Exalted Items: not run yet.";
@@ -822,6 +822,12 @@ exalted::Config LoadConfig() {
 					config.desecrationColor = code;
 				}
 			}
+		} else if (section == "loot_filter") {
+			if (key == "exalted_box") {
+				config.filterBox = on;
+			} else if (key == "label") {
+				config.filterLabel = textValue;
+			}
 		} else if (section == "restore") {
 			if (key == "enabled") {
 				config.restoreEnabled = on;
@@ -1385,6 +1391,212 @@ void InstallStrip(const D2RL::PluginContext* context, const exalted::Summary& su
 	snprintf(g_stripState, sizeof(g_stripState), "takes a restore off (%d attributes are written down on a restored item)", summary.rollStats);
 }
 
+// --- The loot filter's Exalted box -------------------------------------------------------
+//
+// The game's loot filter knows three tiers of equipment: Normal, Exceptional, Elite. A rule
+// names them in "equipmentQuality", and the rule panel has a box for each. The game works a
+// base's tier out from its three family codes, so an exalted base, which is none of the
+// three, comes out as Normal.
+//
+// With the box, an exalted base is a tier of its own, written "exalted" in a rule, value 4
+// in the game (0 to 2 are the game's; 3 is its "no tier", which a rule refuses). Four calls
+// in the game are pointed at the plugin, each through a jump written into unused padding:
+//   - the tier of a dropped item (the show/hide decision) and of an entry in the rule
+//     panel's item list: an exalted base gives 4, everything else the game's own answer;
+//   - the list of tier names, built once on first use: "exalted" = 4 is added, which serves
+//     the rule file's reader and writer and the boxes' click messages alike;
+//   - the rule panel's table of tier -> box: the box the core added to the layout
+//     ("ExaltedQualityChbx") is added for tier 4.
+// Everything else (keeping the tier in a rule, matching, ticking the box when a rule is
+// opened) is the game's own code, which goes by those tables.
+//
+// Only in the game image this was written against; every place is checked first.
+
+constexpr int       kExaltedTier     = 4;
+constexpr uintptr_t kTierOf          = 0x371d80; // tier of an item row: 0 normal, 1 exceptional, 2 elite
+constexpr uint8_t   kTierOfEntry[]   = { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xd9, 0x48, 0x85, 0xc9 };
+constexpr uintptr_t kTierNames       = 0x20d830; // fills the name list from an array of (name, tier)
+constexpr uint8_t   kTierNamesEntry[] = { 0x49, 0x3b, 0xd0, 0x0f, 0x84, 0xfb, 0x01, 0x00, 0x00, 0x4c, 0x8b, 0xdc };
+constexpr uintptr_t kTierBoxes       = 0x173940; // fills a panel's table from an array of (tier, box)
+constexpr uint8_t   kTierBoxesEntry[] = { 0x49, 0x3b, 0xd0, 0x0f, 0x84, 0x6f, 0x01, 0x00, 0x00, 0x56, 0x41, 0x54 };
+constexpr uintptr_t kFindWidget      = 0x855c90; // a panel's widget by name
+constexpr uint8_t   kFindWidgetEntry[] = { 0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x48, 0x83, 0xec, 0x20, 0x4c };
+constexpr uintptr_t kToggleType      = 0x882be0; // the type record of a toggle button
+constexpr uint8_t   kToggleTypeEntry[] = { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8d, 0x0d, 0xcb, 0x18, 0x46 };
+constexpr uintptr_t kTierNamesGuard  = 0x2a97b40; // not 0 once the name list has been built
+constexpr uintptr_t kBoxTableOffset  = 0x1b8;     // the tier -> box table inside the rule panel
+
+struct FilterSite {
+	uintptr_t   site;
+	uint8_t     call[5];
+	uintptr_t   cave;
+	const char* what;
+};
+// (the two tier calls share a jump)
+constexpr FilterSite kFilterSites[] = {
+	{ 0x1c1235, { 0xe8, 0x46, 0x0b, 0x1b, 0x00 }, 0x3ed270, "the tier of a dropped item" },
+	{ 0x151d706, { 0xe8, 0x75, 0x46, 0xe5, 0xfe }, 0x3ed270, "the tier of an entry in the rule panel's list" },
+	{ 0x210156, { 0xe8, 0xd5, 0xd6, 0xff, 0xff }, 0x3ed280, "the list of tier names" },
+	{ 0x14acd16, { 0xe8, 0x25, 0x6c, 0xcc, 0xfe }, 0x3ed290, "the rule panel's boxes" },
+};
+
+using TierOfFn     = int (*)(const uint8_t* row);
+using FillFn       = uint64_t (*)(void* table, uint8_t* begin, uint8_t* end);
+using FindWidgetFn = void* (*)(void* panel, const char* name);
+using TypeFn       = void* (*)();
+
+TierOfFn              g_tierOf      = nullptr;
+FillFn                g_tierNames   = nullptr;
+FillFn                g_tierBoxes   = nullptr;
+FindWidgetFn          g_findWidget  = nullptr;
+TypeFn                g_toggleType  = nullptr;
+std::vector<uint32_t> g_exaltedCodes;            // every exalted base's code as the game holds it, sorted
+char                  g_filterState[200] = "off";
+unsigned              g_filterNamed = 0, g_filterBoxes = 0; // times the name was added / the box was found
+
+int HookTierOf(const uint8_t* row) {
+	if (row != nullptr) {
+		uint32_t code = 0;
+		memcpy(&code, row + kKnownCodeOffset, sizeof(code));
+		if (std::binary_search(g_exaltedCodes.begin(), g_exaltedCodes.end(), code)) {
+			return kExaltedTier;
+		}
+	}
+	return g_tierOf(row);
+}
+
+// The game's array: three of (text, tier), 0x30 bytes each. A text is a pointer, a length, a
+// capacity whose top bit says "not mine to free", and 16 bytes that hold a short text itself.
+uint64_t HookTierNames(void* table, uint8_t* begin, uint8_t* end) {
+	constexpr size_t kEntry = 0x30;
+	if (begin == nullptr || end != begin + 3 * kEntry) {
+		return g_tierNames(table, begin, end);
+	}
+	alignas(16) uint8_t entries[4 * kEntry] = {};
+	memcpy(entries, begin, 3 * kEntry); // (a short text's pointer still points into the game's array, which outlives the call)
+	uint8_t*       added    = entries + 3 * kEntry;
+	const char     name[]   = "exalted";
+	const uint64_t pointer  = reinterpret_cast<uint64_t>(added + 0x18);
+	const uint64_t length   = sizeof(name) - 1;
+	const uint64_t capacity = 0x800000000000000fULL;
+	const int32_t  tier     = kExaltedTier;
+	memcpy(added, &pointer, 8);
+	memcpy(added + 8, &length, 8);
+	memcpy(added + 0x10, &capacity, 8);
+	memcpy(added + 0x18, name, sizeof(name));
+	memcpy(added + 0x28, &tier, 4);
+	++g_filterNamed;
+	return g_tierNames(table, entries, entries + 4 * kEntry);
+}
+
+// The game's array: three of (tier, box), 16 bytes each. The table is a member of the panel.
+uint64_t HookTierBoxes(void* table, uint8_t* begin, uint8_t* end) {
+	constexpr size_t kEntry = 0x10;
+	if (table == nullptr || begin == nullptr || end != begin + 3 * kEntry) {
+		return g_tierBoxes(table, begin, end);
+	}
+	void* panel = static_cast<uint8_t*>(table) - kBoxTableOffset;
+	void* box   = g_findWidget(panel, "ExaltedQualityChbx");
+	// as the game does for its own three: only a toggle button will do
+	bool toggle = false;
+	if (box != nullptr) {
+		const void* wanted = g_toggleType();
+		using OwnTypeFn    = void* (*)(void* widget);
+		void* type         = (*reinterpret_cast<OwnTypeFn**>(box))[0x58 / 8](box);
+		for (; type != nullptr && !toggle; type = *reinterpret_cast<void**>(static_cast<uint8_t*>(type) + 0x10)) {
+			toggle = type == wanted;
+		}
+	}
+	if (!toggle) {
+		return g_tierBoxes(table, begin, end); // a layout without the box: the game's three
+	}
+	alignas(16) uint8_t entries[4 * kEntry] = {};
+	memcpy(entries, begin, 3 * kEntry);
+	const int32_t tier = kExaltedTier;
+	memcpy(entries + 3 * kEntry, &tier, 4);
+	memcpy(entries + 3 * kEntry + 8, &box, 8);
+	++g_filterBoxes;
+	return g_tierBoxes(table, entries, entries + 4 * kEntry);
+}
+
+void InstallFilterBox(const D2RL::PluginContext* context, const exalted::Summary& summary) {
+	if (!g_config.filterBox) {
+		return;
+	}
+	if (!summary.filterBox) {
+		snprintf(g_filterState, sizeof(g_filterState), "NOT active: the rule panel's layout could not be given the box (see the log); the filter sees exalted bases as Normal");
+		return;
+	}
+	const uintptr_t base = context->exeBase;
+	bool            ok   = base != 0 && ImageStamp(base) == kKnownImageStamp && context->CheckExpectedBytes(kTierOf, kTierOfEntry, sizeof(kTierOfEntry))
+	          && context->CheckExpectedBytes(kTierNames, kTierNamesEntry, sizeof(kTierNamesEntry)) && context->CheckExpectedBytes(kTierBoxes, kTierBoxesEntry, sizeof(kTierBoxesEntry))
+	          && context->CheckExpectedBytes(kFindWidget, kFindWidgetEntry, sizeof(kFindWidgetEntry)) && context->CheckExpectedBytes(kToggleType, kToggleTypeEntry, sizeof(kToggleTypeEntry));
+	uint8_t padding[16];
+	memset(padding, 0xcc, sizeof(padding));
+	for (const FilterSite& site : kFilterSites) {
+		ok = ok && context->CheckExpectedBytes(site.site, site.call, sizeof(site.call)) && context->CheckExpectedBytes(site.cave, padding, sizeof(padding));
+	}
+	if (!ok) {
+		snprintf(g_filterState, sizeof(g_filterState), "NOT active: this game build is not the one the filter's code is known in; the box does nothing and the filter sees exalted bases as Normal");
+		LogF("loot filter: the game's filter code is not where it is known to be in this game build (or another plugin changed it), so the Exalted box is left without effect");
+		return;
+	}
+	// The name list is built the first time the game needs a tier's name. After that it is too late to add one.
+	if (*reinterpret_cast<const int32_t*>(base + kTierNamesGuard) != 0) {
+		snprintf(g_filterState, sizeof(g_filterState), "NOT active: the game had already built its list of tier names when the plugin loaded");
+		LogF("loot filter: the game had already built its list of tier names, so \"exalted\" cannot be added; the Exalted box is left without effect");
+		return;
+	}
+	g_tierOf     = reinterpret_cast<TierOfFn>(base + kTierOf);
+	g_tierNames  = reinterpret_cast<FillFn>(base + kTierNames);
+	g_tierBoxes  = reinterpret_cast<FillFn>(base + kTierBoxes);
+	g_findWidget = reinterpret_cast<FindWidgetFn>(base + kFindWidget);
+	g_toggleType = reinterpret_cast<TypeFn>(base + kToggleType);
+	g_exaltedCodes.clear();
+	for (const auto& entry : summary.codes) {
+		if (!entry.second.empty() && !entry.first.empty() && entry.first[0] != '*') { // (the "*" entries are the crystal and the shard)
+			g_exaltedCodes.push_back(FourCC(entry.second));
+		}
+	}
+	std::sort(g_exaltedCodes.begin(), g_exaltedCodes.end());
+	g_exaltedCodes.erase(std::unique(g_exaltedCodes.begin(), g_exaltedCodes.end()), g_exaltedCodes.end());
+
+	void* const targets[] = { reinterpret_cast<void*>(&HookTierOf), reinterpret_cast<void*>(&HookTierOf), reinterpret_cast<void*>(&HookTierNames), reinterpret_cast<void*>(&HookTierBoxes) };
+	uintptr_t   written   = 0; // the jump of the site before (the two tier calls share one)
+	int         index     = 0;
+	// The names and the boxes first: a rule that says "exalted" must be readable before an
+	// exalted base is given that tier. The two tier calls come last.
+	for (const int order : { 2, 3, 0, 1 }) {
+		const FilterSite& site = kFilterSites[order];
+		if (site.cave != written) {
+			uint8_t        jump[14] = { 0xff, 0x25, 0, 0, 0, 0 };
+			const uint64_t address  = reinterpret_cast<uint64_t>(targets[order]);
+			memcpy(jump + 6, &address, sizeof(address));
+			if (!context->PatchBytes(site.cave, padding, sizeof(jump), jump, sizeof(jump))) {
+				break;
+			}
+			written = site.cave;
+		}
+		uint8_t       call[5]  = { 0xe8 };
+		const int32_t relative = static_cast<int32_t>(static_cast<int64_t>(site.cave) - static_cast<int64_t>(site.site + 5));
+		memcpy(call + 1, &relative, sizeof(relative));
+		if (!context->PatchBytes(site.site, site.call, sizeof(site.call), call, sizeof(call))) {
+			break;
+		}
+		++index;
+	}
+	if (index == 4) {
+		snprintf(g_filterState, sizeof(g_filterState), "an Exalted box in the rule panel, %d bases count as that tier", static_cast<int>(g_exaltedCodes.size()));
+	} else if (index >= 2) {
+		// the names and boxes are in, a tier call is not: the box can be ticked, exalted bases still count as Normal
+		snprintf(g_filterState, sizeof(g_filterState), "NOT complete: the loader refused a change to the game's tier code; the box is there but exalted bases still count as Normal");
+		LogF("loot filter: the loader refused the change for %s; exalted bases still count as Normal there", kFilterSites[index == 2 ? 0 : 1].what);
+	} else {
+		snprintf(g_filterState, sizeof(g_filterState), "NOT active: the loader refused a change to the game's filter code; the filter sees exalted bases as Normal");
+		LogF("loot filter: the loader refused the change for %s; the Exalted box is left without effect", kFilterSites[index == 0 ? 2 : 3].what);
+	}
+}
+
 // --- I Hate TOMLs (optional in-game settings menu) -------------------------------------
 //
 // When that plugin is installed, every setting shows up in its menu. Without it nothing here
@@ -1411,6 +1623,9 @@ const MenuRow kMenu[] = {
 	{ "exalted-items", "stat_step_percent", "int", "Stat step %", "100 = the exceptional to elite step again, 0 = same stats as elite.", 0, 300, 5 },
 	{ "exalted-items", "level_req_cap", "int", "Highest level requirement", nullptr, 1, 110, 1 },
 	{ "exalted-items", "name_prefix", "string", "Name prefix", "Text in front of the elite base's name.", 0, 0, 0 },
+	{ nullptr, nullptr, "header", "Loot filter", nullptr, 0, 0, 0 },
+	{ "loot_filter", "exalted_box", "bool", "Exalted box in the loot filter", "A fourth Quality box beside Normal, Exceptional and Elite. Off: the filter sees exalted bases as Normal.", 0, 1, 1 },
+	{ "loot_filter", "label", "string", "Text beside the box", nullptr, 0, 0, 0 },
 	{ nullptr, nullptr, "header", "Cube recipes: elite item + these item codes (empty = off)", nullptr, 0, 0, 0 },
 	{ "recipes", "unique_weapon", "string", "Unique weapon", nullptr, 0, 0, 0 },
 	{ "recipes", "unique_armor", "string", "Unique armor", nullptr, 0, 0, 0 },
@@ -1511,6 +1726,9 @@ std::string MenuValue(const MenuRow& row) {
 		if (key == "stash_slot_right") return std::to_string(crystal ? g_config.crystalSlotRight : g_config.desecrationSlotRight);
 		if (key == "stash_slot_down") return std::to_string(crystal ? g_config.crystalSlotDown : g_config.desecrationSlotDown);
 		return std::to_string(crystal ? g_config.crystalDropPercent : g_config.desecrationDropPercent);
+	}
+	if (section == "loot_filter") {
+		return key == "label" ? g_config.filterLabel : g_config.filterBox ? "true" : "false";
 	}
 	if (section == "restore") {
 		return key == "enabled" ? (g_config.restoreEnabled ? "true" : "false") : key == "material" ? g_config.restoreMaterial : key == "strip_on_downgrade" ? (g_config.restoreStrip ? "true" : "false") : (g_config.restoreShowLine ? "true" : "false");
@@ -1978,6 +2196,7 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	}
 	InstallPickers(context, summary.families);
 	InstallStrip(context, summary);
+	InstallFilterBox(context, summary);
 	g_legend.legend          = summary.legend;
 	g_legend.crystalCode     = summary.crystalCode;
 	g_legend.desecrationCode = summary.desecrationCode;
@@ -2005,8 +2224,8 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 		snprintf(shard, sizeof(shard), "no Shard of Desecration");
 	}
 	snprintf(g_status, sizeof(g_status),
-	         "Exalted Items: %d exalted bases at item levels %d to %d (%d names, %d models); they drop %s; unique drops: %s; set drops: %s; %d cube upgrade recipes, %d back to elite; %s; %s; %s. %d adjusted file(s), %d rebuilt this start; mod files untouched.",
-	         summary.bases, summary.levelLow, summary.levelHigh, summary.names, summary.models, summary.terrorZoneOnly ? "only in terror zones" : "everywhere", g_pickState[exalted::PickUnique], g_pickState[exalted::PickSet], summary.recipes, summary.downgrades, crystal, shard, loot,
+	         "Exalted Items: %d exalted bases at item levels %d to %d (%d names, %d models); they drop %s; unique drops: %s; set drops: %s; loot filter: %s; %d cube upgrade recipes, %d back to elite; %s; %s; %s. %d adjusted file(s), %d rebuilt this start; mod files untouched.",
+	         summary.bases, summary.levelLow, summary.levelHigh, summary.names, summary.models, summary.terrorZoneOnly ? "only in terror zones" : "everywhere", g_pickState[exalted::PickUnique], g_pickState[exalted::PickSet], g_filterState, summary.recipes, summary.downgrades, crystal, shard, loot,
 	         static_cast<int>(summary.files.size()), io.rewritten);
 	LogF("%s (%d import slots redirected)", g_status, slots);
 	// Where the time went, so a slow start can be told from the log.

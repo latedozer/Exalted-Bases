@@ -160,6 +160,12 @@ struct Config {
 	int         desecrationDropPercent = 100;
 	bool        desecrationStashSlot   = true;
 	int         desecrationSlotRight = 3, desecrationSlotDown = 3;
+	// The game's loot filter gets a fourth Quality box, beside Normal, Exceptional and Elite,
+	// that stands for the exalted bases (written "exalted" in a rule). The core adds the box to
+	// the rule panel's layout; the plugin makes the game count an exalted base as that tier.
+	// Off: the layout is left alone and the filter sees an exalted base as a Normal one.
+	bool        filterBox       = true;
+	std::string filterLabel     = "Exalted"; // the text beside the box
 	// Restoring: exalted item + these materials -> the same item with the attributes of its kind.
 	bool        restoreEnabled  = true;
 	std::string restoreMaterial = "crystal";
@@ -269,6 +275,7 @@ struct Summary {
 	int         desecrationSlots  = 0;
 	int         rollStats      = 0; // restore attributes whose roll is written down on the item (0 = a restore cannot be taken off)
 	int         restores       = 0; // restore recipes added per data bank
+	bool        filterBox      = false; // the loot filter's rule panel layout has the Exalted box
 	bool        terrorZoneOnly = false; // the exalted rows carry the terror zone condition
 	int         zoneRows     = 0; // loot rows added that open a level table above the game's own only in a terror zone
 	std::vector<Family> families;
@@ -280,6 +287,12 @@ struct Summary {
 };
 
 Summary Run(Io& io, const Config& config);
+
+// The loot filter's rule panel layout with one more Quality box, "ExaltedQualityChbx", after
+// the Elite one: a copy of the Elite box that sends "exalted", `shift` to its right, with
+// `label` beside it. Returns false (and says why) when the layout is not the expected one;
+// `layout` is unchanged then. A layout that already has the box counts as done.
+bool AddFilterBox(std::string& layout, const std::string& label, std::string& why);
 
 // The legend as plain text (UTF-8, Windows line ends): the two materials, then every exalted
 // base grouped by kind, with its code, its elite base's code, its required level and whether

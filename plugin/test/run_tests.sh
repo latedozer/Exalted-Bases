@@ -72,6 +72,22 @@ gen legend legend="$N/legend.txt" savecodes="$N/legend.codes" >/dev/null
 python3 test/check_legend.py "$N/legend.txt" "$N/legend.codes" "$N/legend/local/lng/strings/item-names.json" | tail -4 | sed 's/^/  /'
 python3 test/check_legend.py "$N/legend.txt" "$N/legend.codes" "$N/legend/local/lng/strings/item-names.json" >/dev/null || bad "legend"
 
+note "loot filter: the Exalted box in the rule panel's layout"
+FL=global/ui/layouts/lootfilteritempanelhd.json
+if [ -f "$VAN/$FL" ]; then
+	python3 test/check_filter.py "$VAN/$FL" "$N/max96/$FL" | sed 's/^/  /'
+	python3 test/check_filter.py "$VAN/$FL" "$N/max96/$FL" >/dev/null || bad "the Exalted box in the layout"
+	gen nobox filterbox=0 >/dev/null
+	[ ! -e "$N/nobox/$FL" ] && echo "  setting off: the layout is not written" || bad "the layout was written with the box turned off"
+	gen twice >/dev/null
+	mkdir -p "$N/twicemod/global/ui/layouts" && cp "$N/twice/$FL" "$N/twicemod/global/ui/layouts/"
+	rm -rf "$N/twiceout"; "$N/gen_test" "$N/twicemod" "$VAN" "$N/twiceout" >/dev/null 2>&1
+	[ ! -e "$N/twiceout/$FL" ] && echo "  a layout that already has the box is left as it is" || bad "a layout that has the box was written again"
+	rm -rf "$N/nobox" "$N/twice" "$N/twicemod" "$N/twiceout"
+else
+	echo "  skipped: no $FL in $VAN"
+fi
+
 note "exalted base codes"
 gen c1 savecodes="$N/codes1.txt" >/dev/null
 gen c2 codes="$N/codes1.txt" savecodes="$N/codes2.txt" >/dev/null
@@ -104,7 +120,7 @@ $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6" line=0 >/dev/null && echo "  without the 
 gen cry6b crystal=1 shard=0 crystalcolor=none >/dev/null
 $CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6b" color=none >/dev/null && echo "  name colour: orange like the game's materials by default; none leaves the name plain" || bad "name colour"
 gen cry6c crystal=1 shard=0 crystalslot=0 >/dev/null
-$CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6c" slot=0 >/dev/null && [ ! -e "$N/cry6c/global/ui" ] && echo "  stash slot off: an ordinary item, no stash layout written" || bad "stash slot off"
+$CRY "$MOD" "$VAN" "$N/cry0" "$N/cry6c" slot=0 >/dev/null && [ -z "$(find "$N/cry6c/global/ui" -iname "bankexpansion*" 2>/dev/null)" ] && echo "  stash slot off: an ordinary item, no stash layout written" || bad "stash slot off"
 # The crystal's slot in the stash's stacking tabs: in the mod's layouts, and in the game's own
 # where a mod has none (a stand-in mod folder without its ui files).
 LAY=global/ui/layouts
@@ -229,6 +245,13 @@ if command -v wine >/dev/null && command -v x86_64-w64-mingw32-g++ >/dev/null &&
 			break
 		fi
 	done
+	# The loot filter's rule panel (in the game it comes out of the game's own archive).
+	for from in "$MOD" "$VAN"; do
+		if [ -f "$from/global/ui/layouts/lootfilteritempanelhd.json" ]; then
+			mkdir -p "$D/global/ui/layouts" && cp "$from/global/ui/layouts/lootfilteritempanelhd.json" "$D/global/ui/layouts/"
+			break
+		fi
+	done
 	# The Worldstone Shard's picture and model description, where the test data has them (in the
 	# game they come out of the game's own archive): the crystal's purple picture is made from them.
 	SHARD=hd/global/ui/items/misc/shard
@@ -242,6 +265,8 @@ if command -v wine >/dev/null && command -v x86_64-w64-mingw32-g++ >/dev/null &&
 	grep -E "Exalted Items:|picker saw|FAIL|stand-in loader" "$N/host1.log" | cut -c1-260 | sed 's/^/  /'
 	grep -q "stand-in loader: ok" "$N/host1.log" || bad "stand-in loader, default settings"
 	grep -q "hooks installed: 3" "$N/host1.log" || bad "the three hooks installed"
+	grep "^loot filter:" "$N/host1.log" | cut -c1-200 | sed 's/^/  /'
+	[ "$(grep -c "^loot filter:" "$N/host1.log")" = 5 ] || bad "the loot filter's Exalted box in the DLL"
 	grep -q "back to elite: the hook took 50 restores off" "$N/host1.log" && echo "  back to elite: the DLL's hook takes a restore off, the item is exactly as before" || bad "the DLL taking a restore off"
 	grep -q "confirmed where they are known to be, no search" "$N/host1.log" && echo "  known game image: pickers confirmed without a search" || bad "the known game image was searched"
 	grep -o "start-up took.*" "$N/host1.log" | sed 's/^/  first start (under wine): /'

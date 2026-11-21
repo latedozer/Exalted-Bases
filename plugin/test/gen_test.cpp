@@ -160,6 +160,7 @@ int main(int argc, char** argv) {
 		if (key == "sharddrop") config.desecrationDropPercent = value;
 		if (key == "crystaldrop") config.crystalDropPercent = value;
 		if (key == "crystalslot") config.crystalStashSlot = value != 0;
+		if (key == "filterbox") config.filterBox = value != 0;
 		if (key == "crystalcolor") config.crystalColor = strcmp(eq + 1, "none") == 0 ? '\0' : eq[1];
 		if (key == "restore") config.restoreEnabled = value != 0;
 		if (key == "restoreline") config.restoreShowLine = value != 0;

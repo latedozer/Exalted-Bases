@@ -2372,6 +2372,7 @@ bool TintSprite(std::string& data, const double* hue) {
 // container that holds the Worldstone Shards' slots, the size of a shard's slot, in the free
 // place nearest to the first shard.
 
+const char* const kFilterLayout = "global/ui/layouts/lootfilteritempanelhd.json";
 const char* const kStashLayouts[] = { "global/ui/layouts/bankexpansionlayouthd.json", "global/ui/layouts/controller/bankexpansionlayouthd.json" };
 const char* const kSlotWidget     = "AdvancedStashSlotWidget";
 
@@ -2636,6 +2637,70 @@ JsonFile LoadJson(Io& io, const char* rel) {
 }
 
 // ---------------------------------------------------------------------------------------
+
+// The end of the JSON object that starts at `open` (a '{'), skipping strings and // comments;
+// npos when it does not close.
+size_t ObjectEnd(const std::string& text, size_t open) {
+	int depth = 0;
+	for (size_t i = open; i < text.size(); ++i) {
+		const char c = text[i];
+		if (c == '"') {
+			for (++i; i < text.size() && text[i] != '"'; ++i) {
+				i += text[i] == '\\' ? 1 : 0;
+			}
+		} else if (c == '/' && i + 1 < text.size() && text[i + 1] == '/') {
+			while (i < text.size() && text[i] != '\n') {
+				++i;
+			}
+		} else if (c == '{') {
+			++depth;
+		} else if (c == '}' && --depth == 0) {
+			return i;
+		}
+	}
+	return std::string::npos;
+}
+
+bool AddFilterBox(std::string& layout, const std::string& label, std::string& why) {
+	if (layout.find("\"ExaltedQualityChbx\"") != std::string::npos) {
+		return true;
+	}
+	// The Elite box: the widget of that name (the name alone is also in its neighbour's "right").
+	const size_t name = layout.find("\"type\": \"ToggleButtonWidget\", \"name\": \"EliteQualityChbx\"");
+	const size_t open = name == std::string::npos ? name : layout.rfind('{', name);
+	const size_t end  = open == std::string::npos ? open : ObjectEnd(layout, open);
+	if (end == std::string::npos) {
+		why = "the rule panel's layout has no Elite box to model the new one on";
+		return false;
+	}
+	std::string       box    = layout.substr(open, end - open + 1);
+	const std::string before = box;
+	const auto        swap   = [](std::string& text, const std::string& from, const std::string& to) {
+		const size_t at = text.find(from);
+		if (at == std::string::npos) {
+			return false;
+		}
+		text.replace(at, from.size(), to);
+		return true;
+	};
+	// Its place: 400 to the right of the Elite box (the game's three are at 0, 400 and 900, so
+	// 1300; the text beside it then ends just inside the panel).
+	const size_t rect = box.find("\"x\":");
+	const int    x    = rect == std::string::npos ? -1 : atoi(box.c_str() + rect + 4);
+	bool         ok   = x > 0 && swap(box, "\"x\": " + std::to_string(x), "\"x\": " + std::to_string(x + 400));
+	ok = ok && swap(box, "\"EliteQualityChbx\"", "\"ExaltedQualityChbx\"") && swap(box, "UpdateQualityFilter:elite\"", "UpdateQualityFilter:exalted\"")
+	     && swap(box, "\"EliteQualityDesc\"", "\"ExaltedQualityDesc\"") && swap(box, "\"@LootFilterEliteQuality\"", "\"" + JsonEscape(label) + "\"")
+	     && swap(box, "\"left\" : { \"name\": \"ExceptionalQualityChbx\" }", "\"left\" : { \"name\": \"EliteQualityChbx\" }");
+	// The Elite box: a controller's "right" goes on to the new one.
+	std::string elite = before;
+	ok = ok && swap(elite, "\"left\" : { \"name\": \"ExceptionalQualityChbx\" }", "\"right\": { \"name\": \"ExaltedQualityChbx\" },\r\n\t\t\t\t\t\t\t\t\t\t\t\"left\" : { \"name\": \"ExceptionalQualityChbx\" }");
+	if (!ok) {
+		why = "the Elite box in the rule panel's layout is not written the way the game's is";
+		return false;
+	}
+	layout.replace(open, end - open + 1, elite + ",\r\n\t\t\t\t\t\t\t\t" + box);
+	return true;
+}
 
 Summary Run(Io& io, const Config& settings) {
 	Summary summary;
@@ -3172,6 +3237,20 @@ Summary Run(Io& io, const Config& settings) {
 		}
 		if (!crystalCode.empty() && config.crystalStashSlot && summary.crystalSlots == 0) {
 			io.Log("the Restoration Crystal has no slot in the stash's stacking tabs: it is kept as an ordinary item");
+		}
+		// The loot filter's Exalted box, in the rule panel's layout.
+		if (config.filterBox && !codes.empty()) {
+			std::string layout, why;
+			if (!ReadAny(io, kFilterLayout, layout)) {
+				io.Log("loot filter: the rule panel's layout could not be read: no Exalted box");
+			} else if (const std::string before = layout; !AddFilterBox(layout, config.filterLabel, why)) {
+				Logf(io, "loot filter: %s: no Exalted box", why.c_str());
+			} else {
+				if (layout != before) { // (a mod's layout that has the box already is used as it is)
+					extraFiles.emplace_back(kFilterLayout, std::move(layout));
+				}
+				summary.filterBox = true;
+			}
 		}
 		if (!desecrationCode.empty() && config.desecrationStashSlot && summary.desecrationSlots == 0) {
 			io.Log("the Shard of Desecration has no slot in the stash's stacking tabs: it is kept as an ordinary item");
