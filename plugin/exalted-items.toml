@@ -107,7 +107,7 @@ stash_slot_down = 3
 # is written "exalted". An exalted base then counts as that tier and no longer as Normal, so a
 # rule that names only the game's three tiers leaves exalted items alone.
 # A profile that uses the box needs this plugin: without it the game does not know the word.
-# false = no box, and the filter sees an exalted base as a Normal one (as before 0.14.0).
+# false = no box, and the filter sees an exalted base as a Normal one (as before 1.0.0).
 [loot_filter]
 exalted_box = true
 # The text beside the box.

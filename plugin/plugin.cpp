@@ -27,7 +27,7 @@
 
 namespace {
 
-constexpr const char* kPluginVersion = "0.14.0";
+constexpr const char* kPluginVersion = "1.0.0";
 
 const D2RL::PluginContext* g_ctx = nullptr;
 char                       g_status[2000] = "Exalted Items: not run yet.";

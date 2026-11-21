@@ -1,4 +1,4 @@
-# Exalted Items: user guide (v0.14.0)
+# Exalted Items: user guide (v1.0.0)
 
 Exalted Items adds a fourth tier of weapons and armor above elite, called Exalted.
 

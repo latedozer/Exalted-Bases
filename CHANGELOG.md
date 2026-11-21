@@ -3,7 +3,7 @@
 Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
 for them.
 
-## 0.14.0 (2026-11-21)
+## 1.0.0 (2026-11-21)
 
 - The game's loot filter gets a fourth Quality box in a rule's screen, beside Normal,
   Exceptional and Elite: **Exalted**. Tick it the way you tick the others. In a profile's code
