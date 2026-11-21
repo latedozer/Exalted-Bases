@@ -48,6 +48,10 @@ that does not need the game. It needs your own mod folder and data extracted fro
 copy of the game; none of that is in this repository. The part that loads the real DLL needs
 Wine.
 
+## License
+
+MIT, see [LICENSE](LICENSE). Third-party code keeps its own license (below).
+
 ## Third-party code
 
 `plugin/third_party/CascLib` is [CascLib](https://github.com/ladislav-zezula/CascLib) by

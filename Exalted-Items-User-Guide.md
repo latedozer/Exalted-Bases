@@ -2,9 +2,6 @@
 
 Exalted Items adds a fourth tier of weapons and armor above elite, called Exalted.
 
-v0.12.0 has passed its offline checks but has not been played yet. The Restoration Crystal,
-its stash slot, the cube recipes and multiplayer are untested in the game.
-
 ## What it adds
 
 - An exalted version of every elite base: Shako gets Exalted Shako, and so on.
