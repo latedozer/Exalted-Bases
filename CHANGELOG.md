@@ -19,7 +19,6 @@ for them.
   Off: no box, and the filter sees exalted bases as Normal, as before.
 - Only in the game build the plugin was written against. In another build the box is left
   out of effect and the log says so.
-- Not changed: the Chronicle's item list still counts an exalted base as a Normal one.
 
 ## 0.13.0 (2026-11-17)
 
