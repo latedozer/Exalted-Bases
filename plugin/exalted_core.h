@@ -254,6 +254,7 @@ struct LegendEntry {
 struct Summary {
 	bool        ok           = false;
 	std::string error;
+	bool        builtIn      = false; // the mod's own tables have Exalted Items already (an exported mod): nothing made, nothing redirected, only the hooks
 	int         bases        = 0; // exalted base items (distinct codes)
 	int         recipes      = 0; // cube upgrade recipes added per data bank
 	int         downgrades   = 0; // cube recipes back to elite added per data bank (one per exalted base)

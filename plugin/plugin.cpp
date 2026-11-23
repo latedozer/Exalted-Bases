@@ -27,7 +27,7 @@
 
 namespace {
 
-constexpr const char* kPluginVersion = "1.0.0";
+constexpr const char* kPluginVersion = "1.2.0";
 
 const D2RL::PluginContext* g_ctx = nullptr;
 char                       g_status[2000] = "Exalted Items: not run yet.";
@@ -2177,6 +2177,26 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 		return true;
 	}
 	RemoveStale(io.genRoot, io.genRoot, summary.files);
+	if (summary.builtIn) {
+		// The mod's own files are read as they are (no redirect), and codes.txt is left for the
+		// mod it was written for. Only the code hooks, fed from the mod's rows.
+		InstallPickers(context, summary.families);
+		InstallStrip(context, summary);
+		InstallFilterBox(context, summary);
+		g_legend.legend          = summary.legend;
+		g_legend.crystalCode     = summary.crystalCode;
+		g_legend.desecrationCode = summary.desecrationCode;
+		g_legendConfig           = config;
+		g_legendPath             = pluginFolder + L"\\legend.txt";
+		snprintf(g_status, sizeof(g_status),
+		         "Exalted Items: built into this mod's own tables (an exported mod), used as they are; %d exalted bases at item levels %d to %d; unique drops: %s; set drops: %s; loot filter: %s; "
+		         "%d restore recipes, back to elite: %s; crystal %s, shard %s. No file adjusted or redirected; table settings do nothing for this mod.",
+		         summary.bases, summary.levelLow, summary.levelHigh, g_pickState[exalted::PickUnique], g_pickState[exalted::PickSet], g_config.filterBox ? g_filterState : "off", summary.restores,
+		         g_stripState, summary.crystalCode.empty() ? "none" : summary.crystalCode.c_str(), summary.desecrationCode.empty() ? "none" : summary.desecrationCode.c_str());
+		LogF("%s", g_status);
+		LogF("start-up took %.1f ms: tables %.1f, finding the pickers %.2f, hooking them %.1f", Clock() - started, tablesMs, g_pickerFindMs, g_pickerHookMs);
+		return true;
+	}
 	if (!config.enabled || summary.files.empty()) {
 		snprintf(g_status, sizeof(g_status), "Exalted Items: %s. The game reads the mod's files as they are.", config.enabled ? "nothing to add" : "disabled in exalted-items.toml");
 		LogF("%s", g_status);

@@ -181,6 +181,23 @@ struct Table {
 		}
 	}
 
+	// Every cell of a row, also of one taken apart only through splitThrough (for reading).
+	std::vector<std::string> WholeRow(const std::vector<std::string>& row) const {
+		if (!PastSplit(row, static_cast<int>(header.size()) - 1) || row.empty()) {
+			return row;
+		}
+		std::vector<std::string> cells(row.begin(), row.end() - 1);
+		const std::string&       rest = row.back();
+		size_t                   start = 0;
+		for (size_t i = 0; i <= rest.size(); ++i) {
+			if (i == rest.size() || rest[i] == '\t') {
+				cells.emplace_back(rest, start, i - start);
+				start = i + 1;
+			}
+		}
+		return cells;
+	}
+
 	std::vector<std::string> NewRow() const {
 		std::vector<std::string> row(header.size());
 		if (crlf && !row.empty()) {
@@ -892,6 +909,9 @@ struct Bank {
 	std::vector<Family> families;
 	int         recipesAdded = 0;
 	int         downgradesAdded = 0;
+	// Cube rows the mod brings itself (description starting with the row marker): kept as they
+	// are, and the plugin makes no row of its own for the same key. See IndexModRows.
+	std::set<std::string> modUpgrades, modDowngrades, modRestores;
 	int         rungs        = 0;
 	int         repointed    = 0;
 	int         zoneRows     = 0;
@@ -1252,8 +1272,8 @@ void AddDowngrades(Io& io, Bank& bank, const Config& config, const std::map<std:
 	for (const ItemTable* items : { &bank.weapons, &bank.armor }) {
 		for (const EliteFamily& family : items->families) {
 			const auto found = codes.find(family.eliteCode);
-			if (found == codes.end() || found->second.empty()) {
-				continue;
+			if (found == codes.end() || found->second.empty() || bank.modDowngrades.count(found->second) != 0) {
+				continue; // (a mod's own row for this base is kept instead)
 			}
 			// (the elite row's name; the exalted rows were added after these row numbers were taken)
 			const std::string name = items->table.Get(items->table.rows[static_cast<size_t>(family.eliteRow)], items->cName);
@@ -1278,6 +1298,79 @@ void AddDowngrades(Io& io, Bank& bank, const Config& config, const std::map<std:
 			t.rows.push_back(std::move(row));
 			++bank.downgradesAdded;
 		}
+	}
+}
+
+// A cube cell as a key: blanks and quotes off, lower case.
+std::string CubeKey(const std::string& cell) {
+	std::string key = Trim(cell);
+	if (key.size() >= 2 && key.front() == '"' && key.back() == '"') {
+		key = key.substr(1, key.size() - 2);
+	}
+	return Lower(Trim(key));
+}
+
+// Cube rows a mod brings for Exalted Items itself: their description starts with the row
+// marker. The plugin never writes into a mod, so such a row is the mod's (a D2RMM mod made by
+// the Live Suite's export, or written by hand): it is kept exactly as it is, and the plugin makes
+// no row of its own for the same thing. A row with `enabled` 0 counts too: that is how a mod
+// takes one of the plugin's recipes away. The key of a row:
+//   upgrade (output names "exc"):    input 1, e.g. "tors,eli,uni"
+//   downgrade (output names "eli"):  the exalted code in input 1
+//   restore (any other):             the exalted code in input 1
+void IndexModRows(Io& io, Bank& bank, const std::map<std::string, std::string>& codes) {
+	const Table& t = bank.cube;
+	const int    cDesc = t.Col("description"), cInput = t.Col("input 1"), cOut = t.Col("output");
+	if (!t.loaded || cDesc < 0 || cInput < 0 || cOut < 0) {
+		return;
+	}
+	std::set<std::string> exalted;
+	for (const auto& entry : codes) {
+		exalted.insert(entry.second);
+	}
+	std::set<std::string> plain; // restore properties named without their twin
+	int unknown = 0;
+	for (const auto& cells : t.rows) {
+		if (!StartsWith(t.Get(cells, cDesc), kRowMarker)) {
+			continue;
+		}
+		const std::vector<std::string> row    = t.WholeRow(cells);
+		const std::string              input  = CubeKey(t.Get(row, cInput));
+		const std::string              output = CubeKey(t.Get(row, cOut));
+		const std::string              base   = input.substr(0, input.find(','));
+		if (output.find("exc") != std::string::npos) {
+			bank.modUpgrades.insert(input);
+		} else if (exalted.count(base) == 0) {
+			++unknown;
+			if (unknown <= 3) {
+				Logf(io, "%scubemain.txt: the mod's row '%s' names no exalted base of this install ('%s' in input 1); kept as it is", bank.dir.c_str(), t.Get(row, cDesc).c_str(), base.c_str());
+			}
+		} else if (output.find("eli") != std::string::npos) {
+			bank.modDowngrades.insert(base);
+		} else {
+			bank.modRestores.insert(base);
+			for (int i = 2; i <= 5; ++i) {
+				const std::string property = CubeKey(t.Get(row, t.Col(("mod " + std::to_string(i)).c_str())));
+				if (std::find(std::begin(kRollProperties), std::end(kRollProperties), property) != std::end(kRollProperties)) {
+					plain.insert(property);
+				}
+			}
+		}
+	}
+	if (unknown > 3) {
+		Logf(io, "%scubemain.txt: ... %d of the mod's rows name no exalted base of this install", bank.dir.c_str(), unknown);
+	}
+	const size_t kept = bank.modUpgrades.size() + bank.modDowngrades.size() + bank.modRestores.size();
+	if (kept > 0) {
+		Logf(io, "%scubemain.txt: kept %zu upgrade, %zu downgrade and %zu restore recipes from the mod (the plugin makes none of its own for those)", bank.dir.c_str(), bank.modUpgrades.size(),
+		     bank.modDowngrades.size(), bank.modRestores.size());
+	}
+	if (!plain.empty()) {
+		std::string list;
+		for (const std::string& property : plain) {
+			list += (list.empty() ? "" : ", ") + property;
+		}
+		Logf(io, "%scubemain.txt: the mod's restore recipes use %s without the twin (xlt-r<n>): a downgrade cannot take that bonus off again", bank.dir.c_str(), list.c_str());
 	}
 }
 
@@ -1320,6 +1413,9 @@ void AddRecipes(Io& io, Bank& bank, const Config& config) {
 		if (!ResolveCrystal(materials, bank)) {
 			Logf(io, "%srecipe '%s' ignored: it names the crystal or the Shard of Desecration, which is turned off or could not be made", bank.dir.c_str(), recipe.key.c_str());
 			continue;
+		}
+		if (bank.modUpgrades.count(Lower(type + ",eli," + quality)) != 0) {
+			continue; // the mod has this recipe (or has it switched off) itself
 		}
 		std::vector<std::string> row    = t.NewRow();
 		int                      inputs = 1;
@@ -2128,8 +2224,8 @@ void AddRestores(Io& io, Bank& bank, const Config& config, const std::map<std::s
 		const int cType = items->table.Col("type"), cType2 = items->table.Col("type2");
 		for (const EliteFamily& family : items->families) {
 			const auto found = codes.find(family.eliteCode);
-			if (found == codes.end() || found->second.empty()) {
-				continue;
+			if (found == codes.end() || found->second.empty() || bank.modRestores.count(found->second) != 0) {
+				continue; // (a mod's own row for this base is kept instead)
 			}
 			const auto&        elite = items->table.rows[static_cast<size_t>(family.eliteRow)];
 			const RestoreKind* kind  = KindOf(types, Trim(items->table.Get(elite, cType)), Trim(items->table.Get(elite, cType2)));
@@ -2702,6 +2798,211 @@ bool AddFilterBox(std::string& layout, const std::string& label, std::string& wh
 	return true;
 }
 
+// --- a mod that has Exalted Items in its tables already -----------------------------------
+//
+// The Live Suite's export (and anyone who copies the adjusted files into a mod) gives a mod
+// whose own tables already hold every row this plugin makes, often edited since: other restore
+// modifiers, other drop weights, recipes removed. Making the rows again would throw those edits
+// away, and adding them a second time would move stat numbers and codes the saves depend on.
+// So such a mod is taken as it is. The game reads its files unchanged; the plugin only gives
+// its code hooks (pickers, restore strip, loot filter box) what they need, read from the
+// mod's own rows. Settings that shape tables do nothing then: the tables are the mod's.
+
+// The sign: an exalted base row (name starting with the row marker) in armor.txt or weapons.txt.
+// No other mod makes such rows.
+bool HasBuiltIn(const Bank& bank) {
+	for (const ItemTable* items : { &bank.weapons, &bank.armor }) {
+		for (const auto& row : items->table.rows) {
+			if (StartsWith(items->table.Get(row, items->cName), kRowMarker)) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+void UseBuiltIn(Io& io, std::vector<Bank>& banks, const Config& config, Summary& summary) {
+	summary.builtIn        = true;
+	summary.terrorZoneOnly = false;
+	io.Log("the mod already has Exalted Items in its own tables (an exported mod): its files are used exactly as they are, nothing is added, taken out or redirected; only the game hooks are installed");
+
+	// Codes: every exalted base row names its elite base in ultracode.
+	std::map<std::string, std::string> codes; // elite code -> exalted code
+	for (Bank& bank : banks) {
+		for (ItemTable* items : { &bank.weapons, &bank.armor }) {
+			items->FindFamilies();
+			const Table& t      = items->table;
+			const int    cLevel = t.Col("level"), cCondition = t.Col("DropConditionCalc");
+			for (const auto& row : t.rows) {
+				if (!StartsWith(t.Get(row, items->cName), kRowMarker)) {
+					continue;
+				}
+				const std::string code = t.Get(row, items->cCode), elite = t.Get(row, items->cUltra);
+				if (code.empty() || elite.empty()) {
+					continue;
+				}
+				const auto added = codes.emplace(elite, code);
+				if (!added.second && added.first->second != code) {
+					Logf(io, "%s: two exalted bases name the elite base '%s' ('%s' and '%s'); the first is used", bank.dir.c_str(), elite.c_str(), added.first->second.c_str(), code.c_str());
+				}
+				if (bank.index == 0) {
+					const int level   = ToInt(t.Get(row, cLevel));
+					summary.levelLow  = summary.levelLow == 0 ? level : std::min(summary.levelLow, level);
+					summary.levelHigh = std::max(summary.levelHigh, level);
+					summary.terrorZoneOnly = summary.terrorZoneOnly || t.Get(row, cCondition).find(kTerrorZone) != std::string::npos;
+				}
+			}
+		}
+	}
+	// The crystal and the shard: their misc rows, by name.
+	const Bank&     first = banks[0];
+	const int       cMiscName = first.misc.Col("name"), cMiscCode = first.misc.Col("code");
+	for (const auto& row : first.misc.rows) {
+		const std::string_view name = first.misc.Get(row, cMiscName);
+		if (name == std::string(kRowMarker) + "Restoration Crystal") {
+			summary.crystalCode = std::string(first.misc.Get(row, cMiscCode));
+		} else if (name == std::string(kRowMarker) + "Shard of Desecration") {
+			summary.desecrationCode = std::string(first.misc.Get(row, cMiscCode));
+		}
+	}
+	// Codes the saves know by another code (codes.txt) would be lost items in this mod. Said, not
+	// changed: the mod's rows are what the game reads. codes.txt is left as it is, so going back
+	// to the mod it was written for keeps working.
+	std::map<std::string, std::string> all = codes;
+	if (!summary.crystalCode.empty()) {
+		all.emplace(kCrystalKey, summary.crystalCode);
+	}
+	if (!summary.desecrationCode.empty()) {
+		all.emplace(kDesecrationKey, summary.desecrationCode);
+	}
+	int differing = 0;
+	for (const auto& saved : config.savedCodes) {
+		const auto found = all.find(saved.first);
+		if (found != all.end() && found->second != saved.second) {
+			if (++differing <= 5) {
+				Logf(io, "'%s' is '%s' in this mod but '%s' in codes.txt: items saved with '%s' are not found in this mod", saved.first.c_str(), found->second.c_str(), saved.second.c_str(),
+				     saved.second.c_str());
+			}
+		}
+	}
+	if (differing > 5) {
+		Logf(io, "... %d codes in all differ from codes.txt", differing);
+	}
+	for (const auto& entry : all) {
+		summary.codes.emplace_back(entry.first, entry.second);
+	}
+	summary.bases = static_cast<int>(codes.size());
+
+	// English names for the legend, from the mod's strings.
+	std::map<std::string, std::string> englishNames;
+	{
+		const JsonFile names = LoadJson(io, kNamesFile);
+		std::map<std::string, std::string, std::less<>> byKey;
+		std::string_view raw;
+		for (const std::string& element : names.array.elements) {
+			if (ObjectValue(element, "Key", raw)) {
+				std::string key(UnquoteView(raw));
+				if (StartsWith(key, kStringMarker) && ObjectValue(element, "enUS", raw)) {
+					byKey.emplace(std::move(key), JsonUnescape(UnquoteView(raw)));
+				}
+			}
+		}
+		for (const ItemTable* items : { &first.weapons, &first.armor }) {
+			for (const auto& row : items->table.rows) {
+				const auto found = byKey.find(items->table.Get(row, items->cNameStr));
+				if (found != byKey.end() && StartsWith(items->table.Get(row, items->cName), kRowMarker)) {
+					englishNames.emplace(items->table.Get(row, items->cUltra), found->second);
+				}
+			}
+		}
+	}
+
+	// What the hooks need, per bank, and what the log tells.
+	for (Bank& bank : banks) {
+		FindFamilies(io, bank, false, config.uniqueTiers, codes);
+		FindFamilies(io, bank, true, config.setTiers, codes);
+		int uniques = 0, sets = 0;
+		for (Family& family : bank.families) {
+			(family.sets ? sets : uniques) += 1;
+			summary.families.push_back(family);
+		}
+		summary.uniques = std::max(summary.uniques, uniques);
+		summary.sets    = std::max(summary.sets, sets);
+		if (summary.legend.empty()) {
+			AddLegend(bank, codes, englishNames, summary.legend);
+		}
+		// The cube rows, by their descriptions (the mod may have changed or removed any of them).
+		const int cDesc = bank.cube.Col("description");
+		int       recipes = 0, downgrades = 0, restores = 0;
+		for (const auto& row : bank.cube.rows) {
+			const std::string desc = bank.cube.Get(row, cDesc);
+			if (!StartsWith(desc, kRowMarker)) {
+				continue;
+			}
+			if (desc.find(" restored: ") != std::string::npos) {
+				++restores;
+			} else if (StartsWith(desc, (std::string(kRowMarker) + "Exalted ").c_str())) {
+				++downgrades;
+			} else {
+				++recipes;
+			}
+		}
+		summary.recipes    = std::max(summary.recipes, recipes);
+		summary.downgrades = std::max(summary.downgrades, downgrades);
+		summary.restores   = std::max(summary.restores, restores);
+		TcCols c {};
+		if (bank.index == 0 && bank.treasure.loaded && BindTc(bank.treasure, c)) {
+			for (const auto& row : bank.treasure.rows) {
+				if (StartsWith(bank.treasure.Get(row, c.name), kTcMarker)) {
+					++summary.rungs;
+				}
+				for (int i = 0; i < 10; ++i) {
+					const std::string entry = c.item[i] >= 0 ? EntryName(bank.treasure.Get(row, c.item[i]), false) : std::string();
+					summary.crystalRows += !entry.empty() && entry == summary.crystalCode ? 1 : 0;
+					summary.desecrationRows += !entry.empty() && entry == summary.desecrationCode ? 1 : 0;
+				}
+			}
+		}
+	}
+
+	// The restore strip goes by stat numbers saved on items: "restored" at kRestoredStatId and
+	// the roll stats counted down from kRollStatTop. They are used only if they are where the
+	// saves expect them, by name.
+	if (config.restoreStrip) {
+		Table stats = first.stats.loaded ? first.stats : LoadTable(io, first.dir, "itemstatcost.txt");
+		Table props = first.props.loaded ? first.props : LoadTable(io, first.dir, "properties.txt");
+		const int cStat = stats.Col("Stat"), cCode = props.Col("code");
+		const auto statAt = [&](int id) { return cStat >= 0 && id >= 0 && static_cast<size_t>(id) < stats.rows.size() ? Trim(stats.Get(stats.rows[static_cast<size_t>(id)], cStat)) : std::string(); };
+		std::set<std::string> propCodes;
+		for (const auto& row : props.rows) {
+			propCodes.insert(Trim(props.Get(row, cCode)));
+		}
+		if (statAt(kRestoredStatId) != kRestoredStat) {
+			Logf(io, "itemstatcost.txt has no '%s' at number %d: a restore cannot be taken off in this mod", kRestoredStat, kRestoredStatId);
+		} else {
+			for (int k = 0; k < kRollStatCount; ++k) {
+				if (statAt(kRollStatTop - k) == "xlt_roll_" + std::to_string(k) && propCodes.count("xlt-r" + std::to_string(k)) != 0) {
+					++summary.rollStats;
+				}
+			}
+		}
+	}
+
+	// The loot filter box: the hook needs the box in the mod's layout; it is not added here.
+	if (config.filterBox) {
+		std::string layout;
+		summary.filterBox = ReadAny(io, kFilterLayout, layout) && layout.find("\"ExaltedQualityChbx\"") != std::string::npos;
+		if (!summary.filterBox) {
+			io.Log("loot filter: the mod's rule panel layout has no Exalted box (it is not added to a mod that has Exalted Items built in)");
+		}
+	}
+	Logf(io, "%d exalted bases, %d upgrade, %d downgrade and %d restore recipes, %d loot rows above the game's own, crystal '%s' in %d loot rows, shard '%s' in %d (as the mod has them)",
+	     summary.bases, summary.recipes, summary.downgrades, summary.restores, summary.rungs, summary.crystalCode.c_str(), summary.crystalRows, summary.desecrationCode.c_str(),
+	     summary.desecrationRows);
+	io.Log("settings that shape the tables (drop levels, terror zone only, recipe inputs, drop weights, restore attributes, stash slots, names) do nothing for this mod: change the mod's rows instead");
+	summary.ok = true;
+}
+
 Summary Run(Io& io, const Config& settings) {
 	Summary summary;
 	Config  config      = settings;
@@ -2737,13 +3038,7 @@ Summary Run(Io& io, const Config& settings) {
 			bank.miscTable = LoadTable(io, bank.dir, "misc.txt");
 			bank.stats     = LoadTable(io, bank.dir, "itemstatcost.txt");
 			bank.props     = LoadTable(io, bank.dir, "properties.txt");
-			StripMarked(bank.miscTable, "name", kRowMarker);
 		}
-		StripMarked(bank.uniques, "*ItemName", kRowMarker);
-		bank.weapons.Strip(oldCodes);
-		bank.armor.Strip(oldCodes);
-		StripMarked(bank.cube, "description", kRowMarker);
-		StripMarked(bank.treasure, "Treasure Class", kTcMarker);
 		banks.push_back(std::move(bank));
 	}
 	if (banks.empty()) {
@@ -2751,6 +3046,22 @@ Summary Run(Io& io, const Config& settings) {
 		return summary;
 	}
 	summary.banks = static_cast<int>(banks.size());
+
+	// A mod that has Exalted Items in its own tables already (one exported from a game that ran
+	// it, with or without edits made since) is used exactly as it is: nothing is taken out,
+	// nothing is made again, no file is redirected. See UseBuiltIn.
+	if (config.enabled && HasBuiltIn(banks[0])) {
+		UseBuiltIn(io, banks, config, summary);
+		return summary;
+	}
+	for (Bank& bank : banks) {
+		StripMarked(bank.miscTable, "name", kRowMarker);
+		StripMarked(bank.uniques, "*ItemName", kRowMarker);
+		bank.weapons.Strip(oldCodes);
+		bank.armor.Strip(oldCodes);
+		// (cubemain: rows with the marker are the mod's own and stay, see IndexModRows)
+		StripMarked(bank.treasure, "Treasure Class", kTcMarker);
+	}
 
 	JsonFile names  = LoadJson(io, kNamesFile);
 	JsonFile models = LoadJson(io, kModelsFile);
@@ -3279,6 +3590,7 @@ Summary Run(Io& io, const Config& settings) {
 					AddMarker(io, bank, config);
 				}
 			}
+			IndexModRows(io, bank, codes);
 			AddRecipes(io, bank, config);
 			AddDowngrades(io, bank, config, codes);
 			AddRestores(io, bank, config, codes);

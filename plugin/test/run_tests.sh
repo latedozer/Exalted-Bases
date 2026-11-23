@@ -67,6 +67,16 @@ gen off enabled=0 >/dev/null
 note "generator: unique and set tables are never written"
 [ -z "$(find "$N" -iname 'uniqueitems.txt' -o -iname 'setitems.txt' -o -iname 'sets.txt')" ] && echo "  none" || bad "a unique or set table was written"
 
+note "a mod's own Exalted cube rows (D2RMM export, or by hand): kept, the plugin makes the rest"
+gen modrows-ref crystal=1 savecodes="$N/modrows.codes" >/dev/null
+rm -rf "$N/modrows-mod" && mkdir -p "$N/modrows-mod/global" && cp -r "$MOD/global/excel" "$N/modrows-mod/global/" && cp -r "$MOD/local" "$MOD/hd" "$N/modrows-mod/" 2>/dev/null
+python3 test/check_mod_rows.py make "$N/modrows-ref/global/excel/cubemain.txt" "$N/modrows-mod/global/excel/cubemain.txt" || bad "mod rows: setting up"
+"$N/gen_test" "$N/modrows-mod" "$VAN" "$N/modrows-out" crystal=1 codes="$N/modrows.codes" > "$N/modrows.out" 2>&1
+cp "$N/modrows-mod/global/excel/cubemain.txt.expect" "$N/modrows-out/global/excel/cubemain.txt.expect"
+python3 test/check_mod_rows.py check "$N/modrows-out/global/excel/cubemain.txt" || bad "a mod's own Exalted cube rows"
+grep -q "kept 1 upgrade, 1 downgrade and 16 restore recipes from the mod" "$N/modrows.out" || bad "mod rows: log line"
+rm -rf "$N/modrows-mod" "$N/modrows-out" "$N/modrows-ref"
+
 note "item code legend: every base and material once, with its elite code and English name"
 gen legend legend="$N/legend.txt" savecodes="$N/legend.codes" >/dev/null
 python3 test/check_legend.py "$N/legend.txt" "$N/legend.codes" "$N/legend/local/lng/strings/item-names.json" | tail -4 | sed 's/^/  /'
@@ -333,6 +343,24 @@ if command -v wine >/dev/null && command -v x86_64-w64-mingw32-g++ >/dev/null &&
 	host build/test-off.toml "$(winepath -w "$DUMP")" > "$N/host5.log"
 	grep -q "disabled in exalted-items.toml" "$N/host5.log" && [ -z "$(find build/fakegame/mods/TestMod/d2rloader/exalted-items/data -type f 2>/dev/null)" ] && echo "  disabled: copies removed" || bad "disabled state"
 	[ -f build/fakegame/mods/TestMod/d2rloader/exalted-items/codes.txt ] && echo "  codes.txt kept while disabled" || bad "codes.txt lost while disabled"
+	# A mod exported with Exalted Items in its own tables (Live Export): the plugin's adjusted
+	# files laid over a copy of the mod, one restore row edited. The plugin must use it as it
+	# is: no copies, codes.txt not rewritten, the hooks installed and working from its rows.
+	E="build/fakegame/mods/Exported"
+	rm -rf "$E" "$N/exported-gen" && mkdir -p "$E/Exported.mpq/data/global" "$E/Exported.mpq/data/local/lng" "$E/Exported.mpq/data/hd/items" "$E/d2rloader/exalted-items"
+	cp -r "$MOD/global/excel" "$MOD/global/ui" "$E/Exported.mpq/data/global/" 2>/dev/null
+	cp -r "$MOD/local/lng/strings" "$E/Exported.mpq/data/local/lng/" 2>/dev/null
+	cp "$MOD/hd/items/items.json" "$E/Exported.mpq/data/hd/items/" 2>/dev/null
+	"$N/gen_test" "$MOD" "$VAN" "$N/exported-gen" crystal=1 savecodes="$E/d2rloader/exalted-items/codes.txt" > /dev/null && cp -r "$N/exported-gen/." "$E/Exported.mpq/data/"
+	sed -i 's/xlt-r11\t\t\t15\t30/xlt-r11\t\t\t50\t60/' "$E/Exported.mpq/data/global/excel/cubemain.txt"
+	cp "$E/d2rloader/exalted-items/codes.txt" "$N/exported-codes.txt"
+	sed -e 's/^enabled = .*/enabled = true/' exalted-items.toml > build/test-exported.toml
+	FAKE_BUILTIN=1 timeout 200 wine build/fake_host.exe "$(winepath -w "$PWD/build/d2rl-exalted-items.dll")" "$(winepath -w "$PWD/build/fakegame")" Exported "$(winepath -w "$PWD/build/test-exported.toml")" "$(winepath -w "$DUMP")" > "$N/host14.log" 2>&1
+	grep -q "stand-in loader: ok" "$N/host14.log" && grep -q "built into this mod's own tables" "$N/host14.log" && grep -q "hooks installed: 3" "$N/host14.log" \
+		&& [ -z "$(find "$E/d2rloader/exalted-items/data" -type f 2>/dev/null)" ] && cmp -s "$E/d2rloader/exalted-items/codes.txt" "$N/exported-codes.txt" \
+		&& grep -q "xlt-r11			50	60" "$E/Exported.mpq/data/global/excel/cubemain.txt" \
+		&& echo "  exported mod with Exalted Items built in: used as it is (edited row kept, nothing copied or redirected), hooks working" || bad "exported mod with Exalted Items built in"
+	rm -rf "$E"
 else
 	echo "  skipped: needs wine, mingw-w64, a built DLL and the image dump"
 fi

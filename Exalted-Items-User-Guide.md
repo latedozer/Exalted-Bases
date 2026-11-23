@@ -1,4 +1,4 @@
-# Exalted Items: user guide (v1.0.0)
+# Exalted Items: user guide (v1.2.0)
 
 Exalted Items adds a fourth tier of weapons and armor above elite, called Exalted.
 
@@ -124,6 +124,13 @@ The tier is rebuilt from your mods every time the game starts.
 - Changes to elite bases carry over. If a mod gives gloves sockets, exalted gloves have them.
 - A new base gets an exalted version if a mod adds it as the top tier of a family.
 - Your mod's files are never changed.
+- A mod can bring its own versions of the exalted cube recipes (rows whose description starts
+  with `[xlt] `, e.g. a restore that gives only enhanced defense). Those are kept as the mod
+  wrote them, and every other base gets the plugin's recipe. A mod row with `enabled` 0 takes a
+  recipe away.
+- A mod exported with Exalted Items already in it (the Live Suite's `.mpq` export) is used exactly
+  as it is. Keep the plugin on: it still handles unique and set drops, taking a restore off and
+  the loot filter box. Settings that shape the tables do nothing for such a mod.
 
 ## What to expect
 

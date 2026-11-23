@@ -91,7 +91,17 @@ if [ -d "$W/ref-max96/global/excel" ]; then
 	cp -r "$MOD/local/lng/strings" "$W/again-in/local/lng/" 2>/dev/null
 	cp "$MOD/hd/items/items.json" "$W/again-in/hd/items/" 2>/dev/null
 	cp -r "$W/ref-max96/." "$W/again-in/"
-	one "regenerate" "$W/again-in" max=93
+	# Since 1.1.0 such a mod is used as it is (an exported mod): nothing written, the same codes
+	# and family lists for the hooks as the run that made it. The old behaviour (rows made again)
+	# is not compared any more.
+	"$N/gen_test" "$W/again-in" "$VAN" "$W/new-regenerate" max=93 families="$W/new-regenerate.families" savecodes="$W/new-regenerate.codes" > "$W/new-regenerate.out" 2>&1
+	CASES=$((CASES + 1))
+	what=""
+	grep -q "^builtin=1" "$W/new-regenerate.out" || what="$what not-seen-as-built-in"
+	[ -z "$(find "$W/new-regenerate" -type f 2>/dev/null)" ] || what="$what files-written"
+	cmp -s <(sort "$W/new-max96.codes") <(sort "$W/new-regenerate.codes") || what="$what codes"
+	cmp -s "$W/new-max96.families" "$W/new-regenerate.families" || what="$what family-lists"
+	if [ -n "$what" ]; then echo "  DIFFERENT [regenerate, built in]:$what"; FAILED=$((FAILED + 1)); fi
 	rm -rf "$W/again-in" # a copy of the mod's own tables: not something the generator wrote
 fi
 

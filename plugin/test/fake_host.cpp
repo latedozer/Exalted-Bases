@@ -498,7 +498,9 @@ int main(int argc, char** argv) {
 	if (uniques.find("[xlt]") != std::string::npos) Fail("uniqueitems.txt read through the mod path holds generated rows");
 	if (ReadAll(genDir + L"\\global\\excel\\setitems.txt", uniquesCopy)) Fail("an adjusted setitems.txt exists");
 	std::string codes;
-	if (hasCopy && !ReadAll(storeDir + L"\\codes.txt", codes)) Fail("codes.txt was not written");
+	const bool  builtIn = getenv("FAKE_BUILTIN") != nullptr; // the mod has Exalted Items in its own tables: no copies, the hooks only
+	if (builtIn && hasCopy) Fail("a mod with Exalted Items built in got adjusted copies");
+	if ((hasCopy || builtIn) && !ReadAll(storeDir + L"\\codes.txt", codes)) Fail("codes.txt was not written");
 	printf("codes.txt: %zu bytes; hooks installed: %zu\n", codes.size(), g_hooks.size());
 	int pickerHooks = 0;
 	for (const Hooked& hook : g_hooks) pickerHooks += hook.rva == kSetPick || hook.rva == kUniquePick ? 1 : 0;
@@ -513,10 +515,10 @@ int main(int argc, char** argv) {
 			return g_image[site] == 0xe8 && site + 5 + static_cast<int64_t>(rel) == cave && g_image[cave] == 0xff && g_image[cave + 1] == 0x25;
 		};
 		std::string layoutCopy;
-		const bool  boxInLayout = ReadAll(genDir + L"\\global\\ui\\layouts\\lootfilteritempanelhd.json", layoutCopy) && layoutCopy.find("ExaltedQualityChbx") != std::string::npos;
+		const bool  boxInLayout = ReadAll((builtIn ? dataDir : genDir) + L"\\global\\ui\\layouts\\lootfilteritempanelhd.json", layoutCopy) && layoutCopy.find("ExaltedQualityChbx") != std::string::npos;
 		const bool  redirected  = callsCave(kTierSite, 0x3ed270) && callsCave(kEntrySite, 0x3ed270) && callsCave(kNamesSite, 0x3ed280) && callsCave(kBoxesSite, 0x3ed290);
 		const char* wantBox     = getenv("FAKE_FILTERBOX"); // "0": the settings turn the box off
-		const bool  expected    = hasCopy && withStampedImage && (wantBox == nullptr || strcmp(wantBox, "0") != 0);
+		const bool  expected    = (hasCopy || builtIn) && withStampedImage && (wantBox == nullptr || strcmp(wantBox, "0") != 0);
 		printf("loot filter: the layout copy %s the Exalted box; the game's four calls %s (%d code changes)\n", boxInLayout ? "has" : "does not have", redirected ? "go to the plugin" : "are the game's own", g_patches);
 		if (expected && !boxInLayout) Fail("the rule panel's layout copy has no Exalted box");
 		if (expected && !redirected) Fail("the loot filter's calls were not redirected");

@@ -174,6 +174,9 @@ int main(int argc, char** argv) {
 	const exalted::Summary s = exalted::Run(io, config);
 	printf("ok=%d error='%s' banks=%d bases=%d levels=%d..%d uniques=%d sets=%d recipes=%d downgrades=%d rungs=%d repointed=%d names=%d models=%d files=%d zone=%d zonerows=%d\n", s.ok, s.error.c_str(), s.banks, s.bases,
 	       s.levelLow, s.levelHigh, s.uniques, s.sets, s.recipes, s.downgrades, s.rungs, s.repointed, s.names, s.models, s.filesWritten, s.terrorZoneOnly ? 1 : 0, s.zoneRows);
+	if (s.builtIn) {
+		printf("builtin=1 rollstats=%d filterbox=%d families=%zu codes=%zu legend=%zu\n", s.rollStats, s.filterBox ? 1 : 0, s.families.size(), s.codes.size(), s.legend.size());
+	}
 	if (config.crystalEnabled) {
 		printf("crystal='%s' tinted=%d restores=%d crystalrows=%d\n", s.crystalCode.c_str(), s.crystalTinted ? 1 : 0, s.restores, s.crystalRows);
 		printf("shard='%s' tinted=%d rows=%d slots=%d crystalslots=%d\n", s.desecrationCode.c_str(), s.desecrationTinted ? 1 : 0, s.desecrationRows, s.desecrationSlots, s.crystalSlots);

@@ -3,6 +3,47 @@
 Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
 for them.
 
+## 1.2.0 (2026-11-23)
+
+- A mod can now bring some of Exalted Items' cube recipes itself, changed the way it wants,
+  and the plugin keeps them. For example a D2RMM mod whose restore recipes for the 15 body
+  armors give only enhanced defense: those 15 stay as the mod wrote them, and every other base
+  gets the plugin's restore recipe as before. This is how the Live Suite's D2RMM export carries
+  edits to Exalted's rows.
+- A mod's row counts when its `description` starts with `[xlt] `. It replaces the plugin's row
+  for the same thing: an upgrade recipe with the same `input 1` (e.g. `"tors,eli,uni"`), a
+  downgrade or restore recipe for the same exalted base (its code in `input 1`). One mod row
+  per base; the rest of the description is free text.
+- To take one of the plugin's recipes away, a mod keeps the row with `enabled` 0: the game
+  ignores it and the plugin makes none.
+- Restore rows should use the twin properties (`xlt-r<n>`, with `xlt-restored` as mod 1) so a
+  downgrade can take the bonus off again. With a plain property (`ac%`) the recipe works, and
+  the log says that a downgrade cannot remove it.
+- The log says how many recipes were kept from the mod.
+- Before, the plugin removed every `[xlt] ` cube row of a mod and made its own again.
+
+## 1.1.0 (2026-11-23)
+
+- A mod that already has Exalted Items in its own tables is now used exactly as it is. This is
+  what the Live Suite's export makes (a whole `.mpq` folder with Exalted's rows and your live
+  edits written in), and what you get by copying the plugin's files into a mod by hand.
+- Before, the plugin threw those rows away at every start and made them again from its own
+  values, so any change to them was lost: other restore modifiers, other drop weights, a removed
+  recipe. Worse, the Restoration Crystal and the Shard of Desecration got new item codes (the
+  ones in the stash stopped working, and the old codes stayed in the boss loot rows), and all
+  restore recipes went missing.
+- Now: nothing is added, taken out or redirected; the game reads the mod's files. The plugin
+  only installs its game hooks (unique and set drops, taking a restore off, the loot filter's
+  Exalted box) and takes what they need from the mod's own rows: the item codes, the stat
+  numbers, the box in the mod's layout.
+- The sign is an exalted base row (name starting with `[xlt] `) in the mod's armor.txt or
+  weapons.txt. A plain mod works as before.
+- Settings that shape the tables (drop levels, terror zone only, recipe inputs, drop weights,
+  restore attributes, stash slots, names) do nothing for such a mod: change its rows instead.
+  The log says so.
+- codes.txt is not rewritten for such a mod. If a code in the mod differs from codes.txt, the
+  log names it (items saved with the old code are not found in that mod).
+
 ## 1.0.0 (2026-11-21)
 
 - The game's loot filter gets a fourth Quality box in a rule's screen, beside Normal,
