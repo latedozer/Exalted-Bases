@@ -14,14 +14,16 @@ name, that one is used). The `.mpq` must be a folder, not a packed archive.
 
 Where the plugin keeps its files depends on where it is installed:
 
-| Plugin DLL in | Its files (adjusted copies in `data/`, and `codes.txt`) |
+| Plugin DLL in | Its files (adjusted copies in `data/`, `codes.txt`, `stat-ids.txt`, previous copies in `backups/`) |
 | --- | --- |
 | `<game>/mods/<mod>/d2rloader/plugins/` (one mod) | `<game>/mods/<mod>/d2rloader/exalted-items/` |
 | `<game>/d2rloader/plugins/` (every mod) | `<game>/d2rloader/exalted-items/<mod>/` |
 
 The second has a folder per mod, because the copies and the codes belong to one mod's files.
-When the plugin is moved from one place to the other, `codes.txt` is taken along on the next
-start and the copies left at the old place are removed.
+When the plugin is moved from one place to the other, `codes.txt` and `stat-ids.txt` are taken
+along on the next start and the copies left at the old place are removed. Reinstalling the mods
+rebuilds only `mods/<mod>/<mod>.mpq/`, never the `d2rloader/` folder beside it, so both places
+keep these files.
 
 ## What it generates
 
@@ -104,17 +106,24 @@ Shard `xa1`; in tables without it, an essence), with its own code, kept in `code
 - **Taking a restore off (`restore_strip.h`).** The cube has no output that removes attributes
   and a recipe cannot read what an item rolled. So every restore property has a twin
   (`xlt-r<n>`, order fixed in `kRollProperties`): the same row plus one function 3 that puts
-  the same roll into a hidden stat (`xlt_roll_<n>`, ids 499 downward, shaped like
+  the same roll into a hidden stat (`xlt_roll_<n>`, numbers from `stat-ids.txt`, shaped like
   `item_req_percent`: signed, saved as -100..155, no text, no price). The game hands the first
   function's amount to the later ones, and function 3 repeats it. Restore recipes use the
   twins. Each exalted -> elite recipe carries `mod 1 = xlt-restored 0..0`, which by itself
   does nothing. The plugin hooks the game's "apply one property" routine (0x3d4620 in image
-  6ab3782c); a call whose row has function 1 on stat 500 and an amount of 0..0 is that sign.
+  6ab3782c); a call whose row has function 1 on the marker stat and an amount of 0..0 is that sign.
   It then calls the routine with `-amount` for every twin whose hidden stat is set, and with
   -1 for the marker. An item without hidden stats (restored by 0.10.x) is left alone. Known
   image only: stamp plus the entry bytes of the routine and its four helpers are checked.
-  Tests: `test/strip_test.cpp` (model of the routine on generated tables) and step 1b of
-  `test/fake_host.cpp` (the real DLL's hook under Wine).
+  The hook is placed before the tables are built (through the loader's mutation transaction
+  where it has one, else its plain hook call), and the tables go by whether it is there
+  (`Config::stripHooked`): without it each exalted -> elite recipe carries the restore recipe's
+  own check instead of the sign (`op` 18, the marker stat = 0), so back to elite takes only
+  items that were never restored and refuses a restored one. A mod with Exalted's rows in its
+  own tables keeps its own back-to-elite rows: no such check there; the log and status say so.
+  Tests: `test/strip_test.cpp` (model of the routine on generated tables), step 1b of
+  `test/fake_host.cpp` (the real DLL's hook under Wine), and the stand-in loader refusing the
+  hook (`FAKE_REFUSE_STRIP`).
 - **Stash slot.** The stash's stacking tabs hold an item when its row says
   `AdvancedStashStackable` = 1 and the stash layout has an `AdvancedStashSlotWidget` naming
   its code. The plugin adds one such widget to adjusted copies of
@@ -149,14 +158,45 @@ Shard `xa1`; in tables without it, an essence), with its own code, kept in `code
 - **Restoring.** One recipe per exalted base (the cube cannot say "exalted" by type):
   base + crystal, output `useitem`, `mod 1` the marker, `mod 2..4` the attributes of the
   base's kind (`kRestoreKinds` in `exalted_core.h`; a base takes the first kind one of its item
-  types belongs to). `op` 18 / `param` 500 / `value` 0 lets the recipe take only an item whose
-  marker stat is 0, which is the pattern the Corruption Shards and Runed Unique Items mods use.
+  types belongs to). `op` 18 / `param` = the marker's number (`stat-ids.txt`; 375 on a packed
+  install, 500 in 1.2.0's layout) / `value` 0 lets the recipe take only an item whose marker
+  stat is 0.
 - **Marker.** Stat `xlt_restored`, a copy of the game's `item_indesctructible` row (on the
-  item or not, one line of text), and property `xlt-restored`. Saved items name stats by
-  number, so the marker is always stat 500; the numbers between the mod's last stat and 500
-  are filled with empty `xlt_unused_<n>` rows. A table that already has more than 500 stats
-  gets no marker and no restoring. (500 is below 511, the most a nine-bit stat number in an
-  item save can hold.)
+  item or not, one line of text), and property `xlt-restored`.
+- **Stat numbers (`stat-ids.txt`, beside codes.txt).** Saved items name stats by number, so the
+  plugin's own numbers (marker and the 13 roll stats, nothing else) are kept in a map and never
+  move. A new install gets them right after the stats the loaded tables have (the larger of both
+  banks). Rows other plugins add come after them. An install that ran 1.2.0 or older (codes.txt,
+  no map) keeps 1.2.0's layout (`layout=legacy`: marker 500, rolls 499 down to 487,
+  `xlt_unused_<n>` rows in between), byte for byte, until the migration tool moves its saves; the
+  saves decide that, not the rule alone (see below). Rows a loaded (exported) mod already has at
+  the plugin's numbers are filled when they are padding (nothing in the row but its name and
+  number, whatever the name) or the plugin's own `xlt_` rows; rows past them are kept, after the
+  plugin's. Any other row there is a stat of the mod's own: restoring is switched off for that
+  bank, nothing moves, and a loud console line says so (saved restored items may read wrong).
+  Keys the plugin does not know in `stat-ids.txt` are ignored, so an older build put back after a
+  newer one still starts.
+- **Never bricking (`codes.txt`, `stat-ids.txt` missing).** After every start that worked, both
+  files are copied to `backups/` beside them. A missing or unreadable file is taken, in this order,
+  from the plugin's old place, from `backups/`, and then from the saves: the codes in the tables
+  the last start stored (else codes worked out anew) and the stat layout of the rule above (else
+  the other one), each set of tables taken only when every save in
+  `<Saved Games>/Diablo II Resurrected/mods/<mod>/` reads with it to its end (`save_check.cpp`,
+  with Exalted's own save reader `save_reader.cpp`; read only). When none does, the plugin stays
+  off and the log, status and console name the characters that hold exalted items. A failed start
+  or a missing file redirect names them too. An unreadable `stat-ids.txt` is kept aside as
+  `stat-ids.txt.unreadable-<date>`, never deleted.
+- **The mod's own Exalted cube rows that disagree with this install** (a restore row whose `op`
+  18 check is not on this install's marker, a back-to-elite row checking another stat, a roll
+  property this install does not have): kept as the mod has them, named in the log, and a loud
+  console line.
+- **Migration (`migrate/`, `exalted_migrate`).** Offline, game closed, started by hand: moves the
+  saved marker and roll stats (Exalted's own only) from the 1.2.0 numbers to packed ones, in place (only the 9-bit
+  numbers and the .d2s checksum change), with a dated backup folder in the saves folder first,
+  a read-back of every item, and a full put-back on any failure; then stat-ids.txt last. A save
+  holding another plugin's stat past the mod's stats stops it (that plugin moves its own). Dry run unless `--apply`. Needs the map 1.3.0 writes at its
+  first start. Test: `test/check_migrate.sh` (copies in build/native/mig).
+  Item saves have room for numbers up to 510 (nine bits; 511 ends a list).
 
 ## The loot filter's Exalted box
 
@@ -249,8 +289,8 @@ data bank at start-up. `test/check_legend.py` checks it against codes.txt and it
 ## Install
 
 Copy `build/d2rl-exalted-items.dll` to `<game>/mods/<mod>/d2rloader/plugins/` (or the global
-`<game>/d2rloader/plugins/`). The mod must be in folder form (`<mod>.mpq` as a folder, which is
-what D2RMM produces; any mod name works).
+`<game>/d2rloader/plugins/`). The mod must be in folder form (`<mod>.mpq` as a folder; any mod
+name works).
 
 Characters that hold exalted items need the plugin to open. To remove it, first get rid of
 those items, then delete the DLL (and the `d2rloader/exalted-items` folder if you like).

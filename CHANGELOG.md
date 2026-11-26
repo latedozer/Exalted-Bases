@@ -3,13 +3,58 @@
 Newest first. Versions before 0.8.5 were test builds and are not listed; no notes were kept
 for them.
 
+## 1.3.0 (not released yet: tested as pre-release builds)
+
+1.3.0 is built and tested in steps, each a pre-release the user installs and tests in game
+(`1.3.0-pre.1` onward). Nothing is published until all of them are done. The build installed on
+2026-11-24 also called itself 1.3.0; from pre.1 on, every build names itself with its build date
+and a hash of its sources, in the log and on the `exalted` console line.
+
+- Exalted's stats no longer sit at fixed numbers with about 112 empty filler rows below them.
+  Their numbers are kept in `stat-ids.txt` beside codes.txt and never move: a new install puts
+  them right after the mod's own stats. Other plugins' rows come after Exalted's.
+- An install that already ran an older version keeps its old layout exactly until the migration
+  tool (`migrate/`) moves the saved items. Run it with the game closed; it backs up first and
+  puts everything back if any item would read differently.
+
+### 1.3.0-pre.1 (2026-11-26): safety and cleanup
+
+No save is written by the plugin; the saves are only read.
+- **Back to elite never half-done.** The hook that takes a restore off is now placed before the
+  tables are built, so they know whether it is there. Without it (another game build, or the
+  loader refused it) the back-to-elite recipes take only items that were never restored: a
+  restored item is refused, instead of going back to elite with its restore kept. The status and
+  the `exalted` console line say so. A mod with Exalted Items already in its own tables keeps its
+  own back-to-elite rows: no such check there, and the log says so.
+- **Never bricked by a lost `codes.txt` or `stat-ids.txt`.** After each start that worked, both
+  are copied to a `backups/` folder beside them (rebuilding the mod's `.mpq` folder never touches it).
+  A missing or unreadable one is put back from there. Without a copy, the saves decide: Exalted
+  builds its tables from the codes in the tables it stored at the last start (or works the codes
+  out again) and from the one stat layout every save reads with, and uses them only when every
+  save reads to its end. Before, a missing `stat-ids.txt` beside `codes.txt` quietly meant the
+  1.2.0 layout (stat 500), which reads restored items of a packed install wrong. If nothing fits,
+  Exalted stays off and names the characters that hold exalted items. A failed start names them
+  too. The saves are only read, by Exalted's own save reader.
+- **Loud warnings on the console** (and again with `exalted`): when the mod has a stat of its own
+  on a number Exalted's restore stats use (restoring is off; restored items may read wrong), and
+  when the mod's own Exalted cube rows disagree with this install (for example a restore row whose
+  check is on another stat number). Such rows are still used as the mod has them.
+- A padding row at Exalted's stat numbers is any row with nothing in it but its name and number,
+  whatever the name. Before, only certain names counted.
+- Keys Exalted does not know in `stat-ids.txt` are ignored, so an older build put back after a
+  newer one still starts.
+- The Shard of Desecration drops half as often as the crystal by default
+  (`[desecration] drop_weight_percent = 50`, was 100).
+- The plugin, its migration tool and its tests no longer name or build anything from another
+  mod or tool.
+
 ## 1.2.0 (2026-11-23)
 
 - A mod can now bring some of Exalted Items' cube recipes itself, changed the way it wants,
-  and the plugin keeps them. For example a D2RMM mod whose restore recipes for the 15 body
+  and the plugin keeps them. For example a mod whose restore recipes for the 15 body
   armors give only enhanced defense: those 15 stay as the mod wrote them, and every other base
-  gets the plugin's restore recipe as before. This is how the Live Suite's D2RMM export carries
-  edits to Exalted's rows.
+  gets the plugin's restore recipe as before. This is how a mod exported with edits to Exalted's
+  rows carries them.
 - A mod's row counts when its `description` starts with `[xlt] `. It replaces the plugin's row
   for the same thing: an upgrade recipe with the same `input 1` (e.g. `"tors,eli,uni"`), a
   downgrade or restore recipe for the same exalted base (its code in `input 1`). One mod row
@@ -24,9 +69,9 @@ for them.
 
 ## 1.1.0 (2026-11-23)
 
-- A mod that already has Exalted Items in its own tables is now used exactly as it is. This is
-  what the Live Suite's export makes (a whole `.mpq` folder with Exalted's rows and your live
-  edits written in), and what you get by copying the plugin's files into a mod by hand.
+- A mod that already has Exalted Items in its own tables is now used exactly as it is: a mod
+  exported from a game that ran the plugin (a whole `.mpq` folder with Exalted's rows and your
+  edits written in), or one you copied the plugin's files into by hand.
 - Before, the plugin threw those rows away at every start and made them again from its own
   values, so any change to them was lost: other restore modifiers, other drop weights, a removed
   recipe. Worse, the Restoration Crystal and the Shard of Desecration got new item codes (the
@@ -186,7 +231,7 @@ for them.
   - installed for every mod (`d2rloader/plugins/` in the game folder): `d2rloader/exalted-items/<mod>/`
 - When the plugin is moved between those two places, `codes.txt` is carried over on the next
   start and the old adjusted copies are removed.
-- Messages no longer assume D2RMM.
+- Messages no longer assume one particular mod name.
 - Still not supported: a mod that is a packed `.mpq` archive file instead of a folder.
 
 ## 0.9.4 (2026-11-14)

@@ -6,7 +6,7 @@ import csv, json, os, struct, sys
 
 MOD, ONLY, BOTH, CODES = sys.argv[1:5]
 OPT = dict(a.split("=", 1) for a in sys.argv[5:])
-DROP = int(OPT.get("drop", "100"))
+DROP = int(OPT.get("drop", "50")) # (the default, as exalted-items.toml has it)
 failures = []
 def fail(text): failures.append(text); print("FAIL: " + text)
 
@@ -46,8 +46,8 @@ for bank in ("global/excel", "global/excel/base"):
             want = max(1, (int(items[crystal]) * DROP + 50) // 100) if cell(th, now, "treasure class") else 0
             if shard not in items:
                 fail(tag + "loot row '%s' has the crystal but not the shard" % cell(th, now, "treasure class"))
-            elif DROP == 100 and items[shard] != items[crystal]:
-                fail(tag + "loot row '%s': shard weight %s, crystal weight %s" % (cell(th, now, "treasure class"), items[shard], items[crystal]))
+            elif abs(int(items[shard]) - int(items[crystal]) * DROP / 100) > 1 or (DROP == 100 and items[shard] != items[crystal]):  # (made from the essence weight: 1 off after rounding)
+                fail(tag + "loot row '%s': shard weight %s, crystal weight %s" % (cell(th, now, "treasure class"), items[shard], items[crystal]) + " (want %d)" % want)
             with_shard += 1
             plain = [("" if v == shard else v) for v in now]
         elif shard in items:

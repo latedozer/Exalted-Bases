@@ -20,9 +20,22 @@ DROP = int(OPT.get("drop", "100"))
 OFF = set(filter(None, OPT.get("off", "").split(",")))
 RESTORE = OPT.get("restore", "1") != "0"
 LINE = OPT.get("line", "1") != "0"
-MARKER_ID = 500
 STRIP = OPT.get("strip", "1") != "0" and RESTORE
-ROLL_TOP = 499
+# The stat numbers the run used: gen_test writes them beside its output (<output>.stat-ids.txt).
+IDS = {"roll": {}}
+for line in open(WITH.rstrip("/") + ".stat-ids.txt"):
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    key, value = line.split("=", 1)
+    if key == "layout":
+        IDS["legacy"] = value == "legacy"
+    elif key == "marker":
+        IDS["marker"] = int(value)
+    elif key.startswith("roll."):
+        IDS["roll"][int(value)] = int(key[5:])
+MARKER_ID = IDS["marker"]
+HIGHEST = max([MARKER_ID] + list(IDS["roll"]))
 ROLL_PROPS = ["res-all", "ac%", "hp%", "regen", "block", "move1", "mana%", "swing1", "att%", "balance1", "cast1", "dmg%", "ease"]  # fixed order: exalted_core.h
 ESSENCES = {"tes", "ceh", "bet", "fed"}
 
@@ -142,7 +155,7 @@ for bank in ("global/excel", "global/excel/base"):
         sh, srows = stats_after
         if srows[: len(stats_before[1])] != stats_before[1]:
             fail(tag + "itemstatcost.txt: the mod's rows changed")
-        if len(srows) != MARKER_ID + 1 or cell(sh, srows[MARKER_ID], "stat") != "xlt_restored":
+        if len(srows) != HIGHEST + 1 or len(srows) <= MARKER_ID or cell(sh, srows[MARKER_ID], "stat") != "xlt_restored":
             fail(tag + "itemstatcost.txt: the marker is not stat number %d" % MARKER_ID)
         else:
             m = srows[MARKER_ID]
@@ -153,15 +166,22 @@ for bank in ("global/excel", "global/excel/base"):
         names = [cell(sh, r, "stat") for r in srows]
         if len(set(names)) != len(names) or any(not n for n in names):
             fail(tag + "itemstatcost.txt: a stat name is empty or used twice")
-        rolls = range(ROLL_TOP - len(ROLL_PROPS) + 1, ROLL_TOP + 1) if STRIP else range(0)
-        for i in range(len(stats_before[1]), min(MARKER_ID, len(srows))):
-            if i in rolls:
+        for i in range(len(stats_before[1]), len(srows)):
+            if i == MARKER_ID:
+                continue
+            k = IDS["roll"].get(i)
+            if k is not None and (STRIP or not IDS["legacy"]):
                 # a hidden stat for one restore roll: saved (signed, -100..155), no text, no price
                 r = srows[i]
-                if cell(sh, r, "stat") != "xlt_roll_%d" % (ROLL_TOP - i) or cell(sh, r, "save bits") != "8" or cell(sh, r, "save add") != "100" or cell(sh, r, "signed") != "1" \
+                if cell(sh, r, "stat") != "xlt_roll_%d" % k or cell(sh, r, "save bits") != "8" or cell(sh, r, "save add") != "100" or cell(sh, r, "signed") != "1" \
                         or any(cell(sh, r, c) for c in ("descfunc", "descstrpos", "descstrneg", "add", "multiply")):
                     fail(tag + "itemstatcost.txt: roll stat %d is not a hidden, saved, signed stat" % i)
-            elif any(c for k, c in enumerate(srows[i]) if k not in (sh["stat"], sh.get("*id", -1), sh.get("*eol", -1))):
+                continue
+            want = "xlt_unused_%d" % i if IDS["legacy"] else "xlt_reserved_%d" % i
+            if cell(sh, srows[i], "stat") != want:
+                fail(tag + "itemstatcost.txt: row %d is '%s', expected '%s'" % (i, cell(sh, srows[i], "stat"), want))
+                break
+            if any(c for k2, c in enumerate(srows[i]) if k2 not in (sh["stat"], sh.get("*id", -1), sh.get("*eol", -1))):
                 fail(tag + "itemstatcost.txt: filler row %d is not empty" % i)
                 break
         ph, prows = props_after

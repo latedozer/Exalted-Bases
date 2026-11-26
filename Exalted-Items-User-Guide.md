@@ -1,4 +1,4 @@
-# Exalted Items: user guide (v1.2.0)
+# Exalted Items: user guide (v1.3.0-pre.1)
 
 Exalted Items adds a fourth tier of weapons and armor above elite, called Exalted.
 
@@ -63,16 +63,21 @@ recipe) removes exactly what the restore added, and the "Restored" line with it.
 then as it was before the restore, on its elite base, and can be upgraded and restored again.
 The crystal is not given back. This works only for items restored with v0.11.0 or later: a
 restore now writes the amounts it rolled onto the item as hidden values, and older restored
-items have none, so they keep their attributes. It needs the game build the plugin knows; in
-another build the `exalted` console line says so and restored items keep their attributes.
+items have none, so they keep their attributes. It needs the game build the plugin knows. Where
+the plugin cannot take a restore off (another game build, or the loader refused its hook), back
+to elite takes only items that were never restored: the cube refuses a restored item, and the
+`exalted` console line says why. A mod with Exalted Items already in its own tables keeps its
+own back-to-elite recipes, which have no such check: there a restored item goes back with its
+restore kept, and the log says so.
 
 ## The Shard of Desecration
 
 A red Worldstone Shard, the counterpart of the crystal: in the cube it turns an exalted item
 back into the same item on its elite base. It replaces the El rune in that recipe.
 
-It drops exactly where the crystal does: from the same bosses in Hell, in the same loot rows,
-with the same chance. It stacks in the stash too. Its slot and the crystal's stand side by
+It drops where the crystal does: from the same bosses in Hell (the act bosses, Blood Raven, the
+Countess and Nihlathak), in the same loot rows, at half the crystal's chance by default
+(`[desecration] drop_weight_percent = 50`). It stacks in the stash too. Its slot and the crystal's stand side by
 side, in the row under Baal's Eye and Mephisto's Brain with this mod set's stash.
 
 ## Loot filter
@@ -110,12 +115,20 @@ game. Changes apply the next time the game starts.
 | `[crystal]` `name_color` | `"orange"` | Colour of the name. Orange is what the game uses for essences, keys and Worldstone Shards |
 | `[crystal]` `drop_weight_percent` | `100` | How often bosses drop it, compared with their essence. `0` = never |
 | `[crystal]` `stash_slot_right`, `stash_slot_down` | `4`, `3` | Where the crystal's stash slot goes, counted in slots from the Western Worldstone Shard's slot. `0` and `0`: a free place near it |
-| `[desecration]` | as `[crystal]` | The same settings for the Shard of Desecration: `enabled`, `name`, `name_color`, `drop_weight_percent`, `stash_slot`, `stash_slot_right` (`3`), `stash_slot_down` (`3`) |
+| `[desecration]` | as `[crystal]` | The same settings for the Shard of Desecration: `enabled`, `name`, `name_color`, `drop_weight_percent` (`50`), `stash_slot`, `stash_slot_right` (`3`), `stash_slot_down` (`3`) |
 | `[restore]` `strip_on_downgrade` | `true` | Back to elite takes a restore off. `false`: nothing is written down and a restored item keeps its attributes |
 | `[crystal]` `stash_slot` | `true` | The crystal has a slot in the stash's stacking tabs. `false`: an ordinary item. Take your crystals out of that slot before you turn this off |
 | `[restore]` `enabled` | `true` | Turns restoring on or off |
 | `[restore]` `show_line` | `true` | Whether a restored item says "Restored" |
 | `[restore.<kind>]` | all `true` | One line per attribute. `false` leaves it out of later restores |
+
+Some settings change items you already have:
+- `stat_step_percent` and `level_req_cap` change the numbers and requirements of every exalted
+  item, the ones in your saves too. A character may no longer be able to wear its gear.
+- `name_prefix` renames every exalted item.
+- Turning `[crystal] enabled` (or `[desecration] enabled`) off leaves the stored materials
+  without an item: take them out of the stash first, or keep the setting on. The same for
+  `stash_slot`: take the materials out of their slot before you turn it off.
 
 ## Other mods
 
@@ -128,20 +141,30 @@ The tier is rebuilt from your mods every time the game starts.
   with `[xlt] `, e.g. a restore that gives only enhanced defense). Those are kept as the mod
   wrote them, and every other base gets the plugin's recipe. A mod row with `enabled` 0 takes a
   recipe away.
-- A mod exported with Exalted Items already in it (the Live Suite's `.mpq` export) is used exactly
-  as it is. Keep the plugin on: it still handles unique and set drops, taking a restore off and
+- A mod that already has Exalted Items in its own tables (exported from a game that ran the
+  plugin, or with the plugin's files copied in by hand) is used exactly as it is. Keep the plugin on: it still handles unique and set drops, taking a restore off and
   the loot filter box. Settings that shape the tables do nothing for such a mod.
 
 ## What to expect
 
 - No effect on frame rate.
-- A slightly longer start, well under a tenth of a second.
+- A longer start: about half a second on this mod set (the log line "start-up took" gives the
+  time). Exalted is built to stay within 500 ms. A start that has to recover `codes.txt` or
+  `stat-ids.txt` from the saves takes longer once.
 - After a game update, unique and set rolls on exalted bases may fall back to rare and magic
   until the plugin is updated. The bases themselves still drop.
 
 ## Checking it works
 
-Type `exalted` in the game console. It shows what was built and how often it was used.
+Type `exalted` in the game console. Its first line names the build (version, build date and a
+hash of its sources); then what was built and how often it was used, and any warning from this
+start again. Warnings also show on the console when the game starts, for example:
+- "the mod has a stat of its own at ...": a mod update put a stat on a number Exalted's restore
+  stats use. Restoring is off; restored items in your saves may read wrong. Back up your saves
+  and do not play those characters until this is solved.
+- "... of the mod's own Exalted cube rows disagree with this install": your mod brings Exalted
+  recipes made for another install (another stat number). They are used as the mod has them,
+  which can let an item be restored twice. Fix or remove those rows in the mod.
 
 ## Item codes
 
@@ -155,6 +178,18 @@ mods a few can differ, so run the command there too.
 - **Characters holding exalted items or crystals need the plugin.** Remove those items from
   every character and the shared stash before you remove or turn off the plugin. The same
   goes for restored items, even after they are turned back to elite.
-- **Do not edit or delete `codes.txt`.** It is in `mods/<mod>/d2rloader/exalted-items/`, or in
-  `d2rloader/exalted-items/<mod>/` when the plugin is installed for every mod.
+- **Do not edit or delete `codes.txt` or `stat-ids.txt`.** They are in
+  `mods/<mod>/d2rloader/exalted-items/`, or in `d2rloader/exalted-items/<mod>/` when the plugin
+  is installed for every mod. Saved items name their base by `codes.txt` and their restore by
+  `stat-ids.txt`. Reinstalling your mods (rebuilding the mod's `.mpq` folder) does not touch that folder. Exalted keeps a previous copy
+  of both in its `backups/` folder. If one goes missing, Exalted puts it back from there, or
+  works it out again from your saves (they are only read), and says so on the console. If neither
+  works, Exalted stays off and names the characters that hold exalted items: those do not load
+  until the files are back. So back up that folder with your saves.
+- **Moving to another computer:** take `codes.txt` and `stat-ids.txt` with the saves.
 - **Back up your saves** before the first run and before changing versions.
+- **Leaving the mod.** Before you remove the plugin or turn it off: turn every exalted item back
+  to elite (a Shard of Desecration in the cube; restored items lose their restore), and drop or
+  sell every Restoration Crystal and Shard of Desecration, on every character, the mercenary and
+  the shared stash. Items restored before v0.11.0 keep Exalted's "Restored" stat even on their
+  elite base, and those need the plugin as well.

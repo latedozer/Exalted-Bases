@@ -10,6 +10,8 @@
 #include <windows.h>
 #include <winternl.h>
 #include <tlhelp32.h>
+#include <shlobj.h>
+#include <knownfolders.h>
 #include <CascLib.h>
 #include <algorithm>
 #include <atomic>
@@ -22,15 +24,24 @@
 
 #include "exalted_core.h"
 #include "game_code.h"
+#include "save_check.h"
 #include "redirect_match.h"
 #include "restore_strip.h"
 
 namespace {
 
-constexpr const char* kPluginVersion = "1.2.0";
+constexpr const char* kPluginVersion = "1.3.0-pre.1";
+// The build: its date and a hash of its sources (build.sh), so builds that carry the same
+// version can be told apart in the log and on the console.
+#ifndef EXALTED_BUILD_ID
+#define EXALTED_BUILD_ID "unknown build"
+#endif
+constexpr const char* kBuildId = EXALTED_BUILD_ID;
 
 const D2RL::PluginContext* g_ctx = nullptr;
 char                       g_status[2000] = "Exalted Items: not run yet.";
+std::vector<std::string>   g_alerts; // loud lines: on the console at the start, and again with 'exalted'
+void                       Alert(const std::string& text);
 // What 'exalted legend' writes: this start's bases and materials, and where the file goes
 // (beside codes.txt). Empty until a start has built the tables.
 exalted::Summary           g_legend;
@@ -294,7 +305,8 @@ bool FindDataRoot(const D2RL::PluginContext* context, std::wstring& root, std::s
 			return false;
 		}
 	}
-	problem = "could not find the data folder of the mod '" + modName + "' (expected mods\\" + modName + "\\" + modName + ".mpq\\data).";
+	const DWORD error = GetLastError();
+	problem = "could not find the data folder of the mod '" + modName + "' (expected mods\\" + modName + "\\" + modName + ".mpq\\data; Windows error " + std::to_string(error) + ").";
 	return false;
 }
 
@@ -323,6 +335,7 @@ void MakeFolders(const std::wstring& path) {
 // to one mod's files. `other` is the place the other kind of install would use.
 struct Storage {
 	std::wstring folder, other;
+	std::wstring loader; // <game>\\d2rloader
 	bool         global = false;
 };
 
@@ -358,6 +371,7 @@ Storage FindStorage(const D2RL::PluginContext* context, const std::wstring& data
 	const std::wstring shared = loaderFolder + L"\\exalted-items\\" + mod;
 	storage.folder            = storage.global ? shared : perMod;
 	storage.other             = storage.global ? perMod : shared;
+	storage.loader            = loaderFolder;
 	return storage;
 }
 
@@ -1327,14 +1341,19 @@ constexpr uint8_t   kPropertyCountEntry[] = { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20
 constexpr uintptr_t kUnitStat             = 0x2f5020; // the loader's own jump to its stat code
 constexpr uint8_t   kUnitStatEntry[]      = { 0xff, 0x25 };
 
-ApplyPropertyFn    g_originalApply = nullptr;
+std::atomic<ApplyPropertyFn> g_originalApply { nullptr };
 ItemVersionFn      g_itemVersion   = nullptr;
 PropertyRowFn      g_propertyRow   = nullptr;
 PropertyCountFn    g_propertyCount = nullptr;
 UnitStatFn         g_unitStat      = nullptr;
 exalted::TwinTable g_twins;
-char               g_stripState[160] = "off";
+char               g_stripState[220] = "off";
+bool               g_stripPlaced     = false;  // the hook is in the game's code (placed before the tables were built)
+char               g_stripRefused[160] = "";   // why it is not, when it was wanted
+std::atomic<bool>  g_stripArmed { false };     // it takes restores off (the tables of this start allow it)
+std::atomic<bool>  g_stripPending { false };   // the loader is placing it; its way back to the game's routine comes right after
 unsigned           g_stripped        = 0; // restores taken off since the game started
+exalted::StatIds   g_statIds;              // the numbers of the marker and roll stats (stat-ids.txt)
 
 struct StripEngine {
 	int   kind;
@@ -1347,48 +1366,132 @@ struct StripEngine {
 	int            Stat(void* unit, int stat) { return g_unitStat(unit, static_cast<uint32_t>(stat), 0); }
 	void           Apply(const exalted::PropertyCall& call) {
 		exalted::PropertyCall copy = call;
-		g_originalApply(kind, item, third, fourth, index, sixth, &copy, state, flags, tenth);
+		g_originalApply.load(std::memory_order_acquire)(kind, item, third, fourth, index, sixth, &copy, state, flags, tenth);
 	}
 };
 
 uint64_t HookApplyProperty(int kind, void* item, void* third, void* fourth, int index, int sixth, exalted::PropertyCall* call, int state, int flags, void* tenth) {
+	// The hook goes in before the tables are built. While the loader is handing over the way back
+	// to the game's routine (right after it placed the hook) a call waits for it; never longer.
+	ApplyPropertyFn original = g_originalApply.load(std::memory_order_acquire);
+	while (original == nullptr && g_stripPending.load(std::memory_order_acquire)) {
+		YieldProcessor();
+		original = g_originalApply.load(std::memory_order_acquire);
+	}
+	if (original == nullptr) {
+		return 0; // the loader gave no way back (see PlaceStrip): the call cannot reach the game's routine
+	}
 	// (min and max are looked at first: nearly every call has an amount and is done here)
-	if (call != nullptr && call->min == 0 && call->max == 0 && item != nullptr) {
+	if (call != nullptr && call->min == 0 && call->max == 0 && item != nullptr && g_stripArmed.load(std::memory_order_acquire)) {
 		StripEngine engine { kind, item, third, fourth, index, sixth, state, flags, tenth };
-		if (exalted::IsStripSign(engine, item, *call)) {
-			if (exalted::StripRestore(engine, item, *call, g_twins) > 0) {
+		if (exalted::IsStripSign(engine, item, *call, g_statIds)) {
+			if (exalted::StripRestore(engine, item, *call, g_twins, g_statIds) > 0) {
 				++g_stripped;
 			}
 			return 0; // the sign itself adds nothing
 		}
 	}
-	return g_originalApply(kind, item, third, fourth, index, sixth, call, state, flags, tenth);
+	return original(kind, item, third, fourth, index, sixth, call, state, flags, tenth);
 }
 
-void InstallStrip(const D2RL::PluginContext* context, const exalted::Summary& summary) {
-	if (!g_config.restoreStrip || summary.rollStats == 0) {
-		snprintf(g_stripState, sizeof(g_stripState), "%s", g_config.restoreStrip ? "not possible with these tables (see the log)" : "off");
+// Placed before the tables are built, so they can go by whether it is there: without it, the
+// recipes back to elite take only items that were never restored (see Config::stripHooked).
+// Through the loader's mutation transaction where it has one, else its plain hook call.
+void PlaceStrip(const D2RL::PluginContext* context) {
+	g_stripPlaced = false;
+	if (!g_config.enabled || !g_config.restoreStrip) {
 		return;
 	}
 	const uintptr_t base = context->exeBase;
 	if (base == 0 || ImageStamp(base) != kKnownImageStamp || !context->CheckExpectedBytes(kApplyProperty, kApplyPropertyEntry, sizeof(kApplyPropertyEntry))
 	    || !context->CheckExpectedBytes(kItemVersion, kItemVersionEntry, sizeof(kItemVersionEntry)) || !context->CheckExpectedBytes(kPropertyRow, kPropertyRowEntry, sizeof(kPropertyRowEntry))
 	    || !context->CheckExpectedBytes(kPropertyCount, kPropertyCountEntry, sizeof(kPropertyCountEntry)) || !context->CheckExpectedBytes(kUnitStat, kUnitStatEntry, sizeof(kUnitStatEntry))) {
-		snprintf(g_stripState, sizeof(g_stripState), "NOT active: this game build is not the one the routine is known in; a restored item keeps its attributes");
-		LogF("back to elite: the game's property routine is not where it is known to be in this game build, so a restore is not taken off (restored items keep their attributes)");
+		snprintf(g_stripRefused, sizeof(g_stripRefused), "this game build is not the one the routine is known in");
+		LogF("back to elite: the game's property routine is not where it is known to be in this game build, so the hook that takes a restore off is left out");
 		return;
 	}
 	g_itemVersion   = reinterpret_cast<ItemVersionFn>(base + kItemVersion);
 	g_propertyRow   = reinterpret_cast<PropertyRowFn>(base + kPropertyRow);
 	g_propertyCount = reinterpret_cast<PropertyCountFn>(base + kPropertyCount);
 	g_unitStat      = reinterpret_cast<UnitStatFn>(base + kUnitStat);
-	if (!context->InstallInlineHook(kApplyProperty, kApplyPropertyEntry, sizeof(kApplyPropertyEntry), HookApplyProperty, &g_originalApply) || g_originalApply == nullptr) {
-		g_originalApply = nullptr;
-		snprintf(g_stripState, sizeof(g_stripState), "NOT active: the loader refused the hook; a restored item keeps its attributes");
-		LogF("back to elite: the loader refused the hook at 0x%llx", static_cast<unsigned long long>(kApplyProperty));
-		return;
+	const D2RL::MutationService* mutation = nullptr;
+	if (context->QueryService(&mutation) == D2RL::ServiceQueryResult::Success && D2RL::HasMutationServiceField(mutation, offsetof(D2RL::MutationService, cancelTransaction) + sizeof(void*))) {
+		D2RL::Mutations::TransactionHandle transaction = D2RL::Mutations::InvalidTransactionHandle;
+		D2RL::Mutations::OperationHandle   operation   = D2RL::Mutations::InvalidOperationHandle;
+		D2RL::Mutations::InlineHookRequest request {};
+		request.structSize   = D2RL::Mutations::InlineHookRequestSize;
+		request.rva          = kApplyProperty;
+		request.expected     = kApplyPropertyEntry;
+		request.expectedSize = sizeof(kApplyPropertyEntry);
+		request.target       = reinterpret_cast<void*>(&HookApplyProperty);
+		D2RL::Mutations::CommitResult result {};
+		result.structSize = D2RL::Mutations::CommitResultSize;
+		void* original    = nullptr;
+		g_stripPending.store(true, std::memory_order_release);
+		bool  ok          = mutation->beginTransaction(context, &transaction) == D2RL::Mutations::Result::Success
+		         && mutation->stageInlineHook(context, transaction, &request, &operation) == D2RL::Mutations::Result::Success;
+		const bool committed = ok && mutation->commit(context, transaction, &result) == D2RL::Mutations::Result::Success && result.result == D2RL::Mutations::Result::Success;
+		ok = committed && mutation->getInlineHookOriginal(context, transaction, operation, &original) == D2RL::Mutations::Result::Success && original != nullptr;
+		if (!committed && transaction != D2RL::Mutations::InvalidTransactionHandle) {
+			static_cast<void>(mutation->cancelTransaction(context, transaction));
+		}
+		if (ok) {
+			g_originalApply.store(reinterpret_cast<ApplyPropertyFn>(original), std::memory_order_release);
+		}
+		g_stripPending.store(false, std::memory_order_release);
+		if (committed && !ok) {
+			// (cannot happen by the loader's word: a committed hook has its original.) The hook
+			// stays in the game's code (a committed change lasts until the plugin unloads), so it
+			// can no longer reach the routine: it is taken as absent for this start.
+			snprintf(g_stripRefused, sizeof(g_stripRefused), "the loader placed the hook but gave no way back to the game's routine");
+			Alert("Exalted Items: WARNING - the loader placed the hook on the game's property routine but gave no way back to it. Back to elite takes only items that were never "
+			      "restored this start, and item properties may not be applied: quit the game, and report this with the log.");
+			return;
+		}
+		if (!ok) {
+			snprintf(g_stripRefused, sizeof(g_stripRefused), "the loader refused the hook (result %u, reason %u)", static_cast<unsigned>(result.result), static_cast<unsigned>(result.failureReason));
+			LogF("back to elite: the loader refused the hook at 0x%llx (result %u, reason %u)", static_cast<unsigned long long>(kApplyProperty), static_cast<unsigned>(result.result),
+			     static_cast<unsigned>(result.failureReason));
+			return;
+		}
+	} else {
+		ApplyPropertyFn original = nullptr;
+		g_stripPending.store(true, std::memory_order_release);
+		const bool installed = context->InstallInlineHook(kApplyProperty, kApplyPropertyEntry, sizeof(kApplyPropertyEntry), HookApplyProperty, &original);
+		if (installed && original != nullptr) {
+			g_originalApply.store(original, std::memory_order_release);
+		}
+		g_stripPending.store(false, std::memory_order_release);
+		if (installed && original == nullptr) {
+			snprintf(g_stripRefused, sizeof(g_stripRefused), "the loader placed the hook but gave no way back to the game's routine");
+			Alert("Exalted Items: WARNING - the loader placed the hook on the game's property routine but gave no way back to it. Back to elite takes only items that were never "
+			      "restored this start, and item properties may not be applied: quit the game, and report this with the log.");
+			return;
+		}
+		if (!installed) {
+			snprintf(g_stripRefused, sizeof(g_stripRefused), "the loader refused the hook");
+			LogF("back to elite: the loader refused the hook at 0x%llx", static_cast<unsigned long long>(kApplyProperty));
+			return;
+		}
 	}
-	snprintf(g_stripState, sizeof(g_stripState), "takes a restore off (%d attributes are written down on a restored item)", summary.rollStats);
+	g_stripPlaced = true;
+	LogF("back to elite: the hook that takes a restore off is in place (before the tables are built)");
+}
+
+// After the tables are built: what the hook goes by, and what the status says.
+void ArmStrip(const exalted::Summary& summary) {
+	g_statIds = summary.statIds;
+	if (!g_config.restoreStrip) {
+		snprintf(g_stripState, sizeof(g_stripState), "off");
+	} else if (!g_stripPlaced) {
+		snprintf(g_stripState, sizeof(g_stripState), "NOT active: %s; %s", g_stripRefused[0] != 0 ? g_stripRefused : "the hook is not in place",
+		         summary.builtIn ? "this mod's own back-to-elite rows have no check, so a restored item goes back with its restore kept" : "back to elite takes only items that were never restored");
+	} else if (summary.rollStats == 0 || !g_statIds.Known()) {
+		snprintf(g_stripState, sizeof(g_stripState), "not possible with these tables (see the log)");
+	} else {
+		g_stripArmed.store(true, std::memory_order_release);
+		snprintf(g_stripState, sizeof(g_stripState), "takes a restore off (%d attributes are written down on a restored item)", summary.rollStats);
+	}
 }
 
 // --- The loot filter's Exalted box -------------------------------------------------------
@@ -1992,7 +2095,14 @@ D2RL::ConsoleCommandResult __cdecl OnConsole(D2R::Game::Client*, const D2RL::Con
 		WriteLegend();
 		return D2RL::ConsoleCommandResult::Handled;
 	}
+	snprintf(line, sizeof(line), "Exalted Items %s (%s)", kPluginVersion, kBuildId);
+	g_ctx->WriteConsoleMessage(line);
 	g_ctx->WriteConsoleMessage(g_status);
+	for (const std::string& alert : g_alerts) {
+		if (alert != g_status) {
+			g_ctx->WriteConsoleError(alert.c_str());
+		}
+	}
 	if (!g_legendPath.empty()) {
 		g_ctx->WriteConsoleMessage("  'exalted legend' writes every exalted item and its item code to legend.txt beside codes.txt");
 	}
@@ -2031,7 +2141,7 @@ D2RL::ConsoleCommandResult __cdecl OnConsole(D2R::Game::Client*, const D2RL::Con
 // line) and given back to the generator on every start. A base that is gone for a while (its
 // mod was switched off) keeps its line, and its code is not given to anything else.
 
-using CodeList = std::vector<std::pair<std::string, std::string>>;
+using CodeList = exalted::CodeList;
 
 void ReadCodes(const std::wstring& path, CodeList& codes) {
 	std::string text;
@@ -2090,6 +2200,323 @@ void SaveCodes(const std::wstring& path, const CodeList& before, const CodeList&
 	}
 }
 
+// Writes a file that must not exist yet (stat-ids.txt is never replaced by the plugin).
+bool WriteNewFile(const std::wstring& path, const std::string& text) {
+	const HANDLE file    = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+	DWORD        written = 0;
+	if (file == INVALID_HANDLE_VALUE) {
+		return false;
+	}
+	const bool ok = WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) != 0 && written == text.size();
+	CloseHandle(file);
+	if (!ok) {
+		DeleteFileW(path.c_str());
+	}
+	return ok;
+}
+
+// --- Never bricking: previous copies, the saves, the characters named ------------------------
+//
+// Saved items name exalted bases by code (codes.txt) and restores by stat number (stat-ids.txt).
+// If either file is lost, the tables a start builds could read those items as something else,
+// and if Exalted does not start its tier at all, characters holding exalted items do not load.
+// So a missing file is recovered, in this order: its previous copy (backups\ beside it; reinstalling
+// the mods rebuilds only the mod's .mpq folder, never this one), then the saves (read only):
+// the tables of this start are only used when every save reads with them to its end. Only when
+// neither works does Exalted refuse, naming the characters that hold exalted items.
+
+void Alert(const std::string& text) {
+	LogF("%s", text.c_str());
+	if (std::find(g_alerts.begin(), g_alerts.end(), text) == g_alerts.end()) {
+		g_alerts.push_back(text);
+	}
+	if (g_ctx != nullptr) {
+		g_ctx->WriteConsoleError(text.c_str());
+	}
+}
+
+// The game's save folder for the active mod (<Saved Games>\Diablo II Resurrected\mods\<mod>).
+// EXALTED_SAVES_DIR names another one (the tests).
+std::wstring SavesFolder(const D2RL::PluginContext* context) {
+	wchar_t     own[1024];
+	const DWORD n = GetEnvironmentVariableW(L"EXALTED_SAVES_DIR", own, 1024);
+	if (n > 0 && n < 1024) {
+		return own;
+	}
+	PWSTR        known = nullptr;
+	std::wstring folder;
+	if (SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &known) == S_OK && known != nullptr) {
+		folder = std::wstring(known) + L"\\Diablo II Resurrected";
+		if (context->activeMod != nullptr && context->activeMod[0] != '\0') {
+			folder += L"\\mods\\" + Widen(context->activeMod);
+		}
+	}
+	CoTaskMemFree(known);
+	return folder;
+}
+
+std::vector<exalted::SaveFile> ReadSaves(const std::wstring& folder) {
+	std::vector<exalted::SaveFile> files;
+	for (const wchar_t* pattern : { L"\\*.d2s", L"\\*.d2i" }) {
+		WIN32_FIND_DATAW found {};
+		const HANDLE     find = FindFirstFileW((folder + pattern).c_str(), &found);
+		if (find == INVALID_HANDLE_VALUE) {
+			continue;
+		}
+		do {
+			exalted::SaveFile file;
+			file.name = Narrow(found.cFileName);
+			if ((found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 && GameIo::ReadWhole(folder + L"\\" + found.cFileName, file.bytes)) {
+				files.push_back(std::move(file));
+			}
+		} while (FindNextFileW(find, &found) != 0);
+		FindClose(find);
+	}
+	std::sort(files.begin(), files.end(), [](const exalted::SaveFile& a, const exalted::SaveFile& b) { return a.name < b.name; });
+	return files;
+}
+
+// The tables the game reads this start (plain = false: the adjusted copies where there are
+// some), or the mod's own (plain = true), as the save reader needs them.
+exalted::SaveTables TablesFor(GameIo& io, const exalted::Summary& summary, bool plain) {
+	exalted::SaveTables                       tables;
+	const std::pair<const char*, std::string*> files[] = { { "global/excel/armor.txt", &tables.armor }, { "global/excel/weapons.txt", &tables.weapons },
+		                                                   { "global/excel/misc.txt", &tables.misc }, { "global/excel/itemstatcost.txt", &tables.stats } };
+	for (const auto& file : files) {
+		const bool copy = !plain && std::find(summary.files.begin(), summary.files.end(), file.first) != summary.files.end();
+		if (!(copy && io.ReadCopy(file.first, *file.second)) && !io.ReadMod(file.first, *file.second)) {
+			io.ReadBase(file.first, *file.second);
+		}
+	}
+	return tables;
+}
+
+// "Hellpal, Femboys and the shared stash (SharedStashSoftCoreV2)"
+std::string Characters(const std::vector<std::string>& files) {
+	std::vector<std::string> names;
+	for (const std::string& file : files) {
+		const std::string name = exalted::SaveLabel(file.substr(0, file.find(':')));
+		if (std::find(names.begin(), names.end(), name) == names.end()) {
+			names.push_back(name);
+		}
+	}
+	std::string text;
+	for (size_t i = 0; i < names.size(); ++i) {
+		text += (i == 0 ? "" : i + 1 == names.size() ? " and " : ", ") + names[i];
+	}
+	return text.empty() ? "no character" : text;
+}
+
+bool ReplaceFile(const std::wstring& path, const std::string& text) {
+	const std::wstring temp    = path + L".xlt-tmp";
+	const HANDLE       file    = CreateFileW(temp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	DWORD              written = 0;
+	const bool         ok      = file != INVALID_HANDLE_VALUE && WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr) != 0 && written == text.size();
+	if (file != INVALID_HANDLE_VALUE) {
+		CloseHandle(file);
+	}
+	if (!ok || MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) == 0) {
+		DeleteFileW(temp.c_str());
+		return false;
+	}
+	return true;
+}
+
+// The previous copy of codes.txt or stat-ids.txt: backups\<name>, the same as the file after a
+// start that worked.
+void KeepPreviousCopy(const std::wstring& folder, const wchar_t* name) {
+	std::string now, kept;
+	if (!GameIo::ReadWhole(folder + L"\\" + name, now)) {
+		return;
+	}
+	const std::wstring copy = folder + L"\\backups\\" + name;
+	if (GameIo::ReadWhole(copy, kept) && kept == now) {
+		return;
+	}
+	MakeFolders(folder + L"\\backups");
+	if (!ReplaceFile(copy, now)) {
+		LogF("could not keep a previous copy of %s in %s (error %lu)", Narrow(name).c_str(), Narrow(folder + L"\\backups").c_str(), GetLastError());
+	}
+}
+
+std::wstring Stamp() {
+	SYSTEMTIME now {};
+	GetLocalTime(&now);
+	wchar_t text[32];
+	swprintf(text, 32, L"%04u%02u%02u-%02u%02u%02u", now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute, now.wSecond);
+	return text;
+}
+
+struct Ledger {
+	bool        codesKnown   = false; // codes.txt was read (here, at the old place, or a previous copy)
+	bool        statIdsKnown = false;
+	std::string statIdsProblem;       // stat-ids.txt is there and cannot be read (and nothing else could be)
+};
+
+// codes.txt and stat-ids.txt into `config`: from the plugin's folder; else from the plugin's old
+// place (it was moved between a mod's loader folder and the game's); else from the previous copy.
+// One taken from elsewhere is put in place (a copy; the source stays).
+Ledger ReadLedger(const std::wstring& folder, const std::wstring& other, exalted::Config& config) {
+	Ledger ledger;
+	struct Source {
+		std::wstring dir;
+		const char*  what;
+		bool         previous;
+	};
+	const Source sources[] = { { folder, "", false }, { other, "the plugin's old place", false }, { folder + L"\\backups", "its previous copy", true },
+		                       { other + L"\\backups", "its previous copy at the plugin's old place", true } };
+	const auto putInPlace = [&](const std::wstring& from, const wchar_t* name, const Source& source) {
+		const std::wstring to = folder + L"\\" + name;
+		MakeFolders(folder);
+		if (IsFile(to)) {
+			MoveFileExW(to.c_str(), (to + L".unreadable-" + Stamp()).c_str(), 0); // (kept aside, not deleted)
+		}
+		const bool copied = CopyFileW(from.c_str(), to.c_str(), TRUE) != 0;
+		char       line[900];
+		snprintf(line, sizeof(line), "%s %s from %s%s", Narrow(name).c_str(), source.previous ? "was missing or could not be read: put back" : "taken over", source.what,
+		         copied ? "" : " (it could not be copied there; read from where it is)");
+		if (source.previous) {
+			Alert(std::string("Exalted Items: ") + line + ".");
+		} else {
+			LogF("%s (%s)", line, Narrow(from).c_str());
+		}
+	};
+	for (const Source& source : sources) {
+		const std::wstring path = source.dir + L"\\codes.txt";
+		if (source.dir.empty() || source.dir == L"\\backups" || !IsFile(path)) {
+			continue;
+		}
+		ReadCodes(path, config.savedCodes);
+		ledger.codesKnown = true;
+		if (source.dir != folder) {
+			putInPlace(path, L"codes.txt", source);
+		}
+		break;
+	}
+	for (const Source& source : sources) {
+		const std::wstring path = source.dir + L"\\stat-ids.txt";
+		std::string        text;
+		if (source.dir.empty() || source.dir == L"\\backups" || !GameIo::ReadWhole(path, text)) {
+			continue;
+		}
+		std::string      why;
+		exalted::StatIds ids;
+		if (!exalted::ParseStatIds(text, ids, why)) {
+			LogF("%s cannot be read (%s)", Narrow(path).c_str(), why.c_str());
+			if (ledger.statIdsProblem.empty()) {
+				ledger.statIdsProblem = "stat-ids.txt cannot be read (" + why + ")";
+			}
+			continue;
+		}
+		config.savedStatIds = ids;
+		ledger.statIdsKnown = true;
+		if (source.dir != folder) {
+			putInPlace(path, L"stat-ids.txt", source);
+		}
+		break;
+	}
+	return ledger;
+}
+
+// Runs the generator when codes.txt or stat-ids.txt could not be read at all: with the codes in
+// the tables the last start stored (else codes worked out anew), and the stat layout of 1.3.0's
+// rule (else the other one). The first that every save reads with is taken. `refusal` is set
+// when none is: the start must not go on.
+exalted::Summary RecoverAndRun(GameIo& io, exalted::Config& config, const Ledger& ledger, const std::wstring& savesFolder, const std::wstring& pluginFolder, std::string& refusal) {
+	const double                         started = Clock();
+	const std::vector<exalted::SaveFile> saves   = ReadSaves(savesFolder);
+	std::vector<exalted::CodeList>       codeSets;
+	if (ledger.codesKnown) {
+		codeSets.push_back(config.savedCodes);
+	} else {
+		std::string armor, weapons, misc;
+		const bool  stored = io.ReadCopy("global/excel/armor.txt", armor) | io.ReadCopy("global/excel/weapons.txt", weapons);
+		if (stored) {
+			io.ReadCopy("global/excel/misc.txt", misc) || io.ReadMod("global/excel/misc.txt", misc) || io.ReadBase("global/excel/misc.txt", misc);
+			if (armor.empty()) {
+				io.ReadMod("global/excel/armor.txt", armor) || io.ReadBase("global/excel/armor.txt", armor);
+			}
+			if (weapons.empty()) {
+				io.ReadMod("global/excel/weapons.txt", weapons) || io.ReadBase("global/excel/weapons.txt", weapons);
+			}
+			exalted::CodeList found = exalted::CodesInTables(armor, weapons, misc);
+			if (!found.empty()) {
+				LogF("codes.txt and its previous copy are missing: %zu codes found in the tables stored at the last start", found.size());
+				codeSets.push_back(std::move(found));
+			}
+		}
+		codeSets.emplace_back(); // codes worked out anew
+	}
+	std::vector<exalted::Config::NewLayout> layouts;
+	if (ledger.statIdsKnown) {
+		layouts.push_back(exalted::Config::NewLayout::Auto); // (not used: the map is known)
+	}
+	LogF("%s%s%s: checking every save (%zu files in %s) against the tables before they are used", ledger.codesKnown ? "" : "codes.txt", !ledger.codesKnown && !ledger.statIdsKnown ? " and " : "",
+	     ledger.statIdsKnown ? "" : "stat-ids.txt", saves.size(), Narrow(savesFolder).c_str());
+	exalted::Summary         summary;
+	std::vector<std::string> unreadable;
+	std::string              taken;
+	for (size_t c = 0; c < codeSets.size() && taken.empty(); ++c) {
+		std::vector<exalted::Config::NewLayout> tries = layouts;
+		if (tries.empty()) { // 1.3.0's rule first, then the other layout
+			const bool legacyFirst = !codeSets[c].empty();
+			tries                  = { legacyFirst ? exalted::Config::NewLayout::Legacy : exalted::Config::NewLayout::Packed, legacyFirst ? exalted::Config::NewLayout::Packed : exalted::Config::NewLayout::Legacy };
+		}
+		for (const exalted::Config::NewLayout layout : tries) {
+			config.savedCodes    = codeSets[c];
+			config.newStatLayout = layout;
+			io.alerts.clear();
+			summary = exalted::Run(io, config);
+			if (!summary.ok) {
+				return summary;
+			}
+			if (summary.builtIn || saves.empty()) {
+				taken = summary.builtIn ? "the mod has Exalted's rows in its own tables" : "there are no saves yet";
+				break;
+			}
+			std::set<std::string> exaltedCodes;
+			for (const auto& code : summary.codes) {
+				exaltedCodes.insert(code.second);
+			}
+			const exalted::SaveCheck check = exalted::CheckSaves(saves, TablesFor(io, summary, false), TablesFor(io, summary, true), exaltedCodes);
+			for (const std::string& skipped : check.skipped) {
+				LogF("  save not checked (the save reader cannot read it, with or without Exalted's tables): %s", skipped.c_str());
+			}
+			const char* codesFrom = ledger.codesKnown ? "codes.txt" : !codeSets[c].empty() ? "the codes of the last start's tables" : "codes worked out anew";
+			const char* layoutName = ledger.statIdsKnown ? "stat-ids.txt" : layout == exalted::Config::NewLayout::Legacy ? "1.2.0's stat layout" : "the packed stat layout";
+			if (check.Ok()) {
+				char line[300];
+				snprintf(line, sizeof(line), "%s and %s: all %d saves read with these tables (%zu hold exalted items)", codesFrom, layoutName, check.files - static_cast<int>(check.skipped.size()),
+				         check.holders.size());
+				taken = line;
+				break;
+			}
+			LogF("  %s and %s: %zu saves would read wrong, e.g. %s", codesFrom, layoutName, check.unreadable.size(), check.unreadable[0].c_str());
+			unreadable = check.unreadable;
+		}
+	}
+	if (taken.empty()) {
+		std::vector<std::string> holders = exalted::FilesWithUnknownItems(saves, TablesFor(io, summary, true));
+		holders.insert(holders.end(), unreadable.begin(), unreadable.end());
+		refusal = std::string(ledger.codesKnown ? "" : "codes.txt") + (!ledger.codesKnown && !ledger.statIdsKnown ? " and " : "") + (ledger.statIdsKnown ? "" : "stat-ids.txt") +
+		          " could not be recovered (no previous copy, and the saves do not read with the tables Exalted would build now). Exalted items are off, so " + Characters(holders) +
+		          " cannot be loaded until those files are put back into " + Narrow(pluginFolder) + " from a backup; the other characters play as usual.";
+		return summary;
+	}
+	const std::vector<std::string> holders = exalted::FilesWithUnknownItems(saves, TablesFor(io, summary, true));
+	char                           line[700];
+	const bool both = !ledger.codesKnown && !ledger.statIdsKnown;
+	snprintf(line, sizeof(line), "Exalted Items: %s%s%s %s, recovered: %s (%.0f ms).", ledger.codesKnown ? "" : "codes.txt", both ? " and " : "", ledger.statIdsKnown ? "" : "stat-ids.txt",
+	         !ledger.statIdsProblem.empty() ? "could not be read and had no previous copy" : both ? "were missing and had no previous copies" : "was missing and had no previous copy", taken.c_str(),
+	         Clock() - started);
+	if (holders.empty()) {
+		LogF("%s", line + 15); // (a new install: nothing in the saves depends on them)
+	} else {
+		Alert(line);
+	}
+	return summary;
+}
+
 constexpr D2RL::PluginInfo kPluginInfo {
 	.infoSize    = D2RL::PluginInfoSize,
 	.abiVersion  = D2RL_PLUGIN_ABI_VERSION,
@@ -2113,7 +2540,7 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 		return false;
 	}
 	g_ctx = context;
-	LogF("Exalted Items %s loading (D2R %s, SDK %s)", kPluginInfo.version, context->buildVersion != nullptr ? context->buildVersion : "?", D2RL_SDK_VERSION);
+	LogF("Exalted Items %s (%s) loading (D2R %s, SDK %s)", kPluginInfo.version, kBuildId, context->buildVersion != nullptr ? context->buildVersion : "?", D2RL_SDK_VERSION);
 	static_cast<void>(context->RegisterConsoleCommand("exalted", OnConsole, "Exalted Items: what was generated, and how often the game used it"));
 
 	g_config = LoadConfig();
@@ -2139,9 +2566,18 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	}
 	GameIo      io;
 	std::string problem;
-	if (!FindDataRoot(context, io.dataRoot, problem)) {
-		LogF("%s", problem.c_str());
-		snprintf(g_status, sizeof(g_status), "Exalted Items: inactive - %s", problem.c_str());
+	// (a folder that is there can be missed once by the file system: tried again before the tier
+	// is left off, which would keep characters holding exalted items from loading)
+	bool found = FindDataRoot(context, io.dataRoot, problem);
+	for (int retry = 1; !found && retry <= 3 && problem.rfind("could not find the data folder", 0) == 0; ++retry) {
+		LogF("%s Trying again (%d of 3).", problem.c_str(), retry);
+		Sleep(100);
+		found = FindDataRoot(context, io.dataRoot, problem);
+	}
+	if (!found) {
+		snprintf(g_status, sizeof(g_status), "Exalted Items: inactive - %s The exalted tier is off this start: characters holding exalted items or materials may not load until it is back.",
+		         problem.c_str());
+		Alert(g_status);
 		return true;
 	}
 	const Storage      storage      = FindStorage(context, io.dataRoot);
@@ -2150,38 +2586,53 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	io.genRoot                      = pluginFolder + L"\\data";
 	LogF("mod data folder (read only): %s", Narrow(io.dataRoot).c_str());
 	LogF("the plugin's own files (%s): %s", storage.global ? "installed for every mod" : "installed for this mod", Narrow(pluginFolder).c_str());
-	// The plugin was moved between a mod's loader folder and the game's: the codes come along
-	// (saved items go by them), and the copies left at the old place are removed.
-	if (!IsFile(codesPath) && IsFile(storage.other + L"\\codes.txt")) {
-		MakeFolders(pluginFolder);
-		if (CopyFileW((storage.other + L"\\codes.txt").c_str(), codesPath.c_str(), TRUE) != 0) {
-			LogF("codes.txt taken over from %s", Narrow(storage.other).c_str());
-		} else {
-			LogF("codes.txt could not be copied from %s (error %lu); the game runs without exalted items rather than hand out new codes", Narrow(storage.other).c_str(), GetLastError());
-			snprintf(g_status, sizeof(g_status), "Exalted Items: inactive - codes.txt could not be copied from %s.", Narrow(storage.other).c_str());
-			return true;
-		}
-	}
+	LogF("the saves (read only, and only when codes.txt or stat-ids.txt must be recovered): %s", Narrow(SavesFolder(context)).c_str());
 	if (IsDirectory(storage.other + L"\\data")) {
 		RemoveStale(storage.other + L"\\data", storage.other + L"\\data", {});
 	}
 
 	exalted::Config config  = g_config;
 	const double    started = Clock();
-	ReadCodes(codesPath, config.savedCodes);
-	const exalted::Summary summary  = exalted::Run(io, config);
-	const double           tablesMs = Clock() - started;
+	// The hook that takes a restore off goes in first: the tables are built by whether it is there.
+	PlaceStrip(context);
+	config.stripHooked = g_stripPlaced;
+	// codes.txt and stat-ids.txt: read, or put back from the plugin's old place or a previous copy.
+	// Without them (and without a previous copy) the saves decide (RecoverAndRun).
+	const std::wstring statIdsPath = pluginFolder + L"\\stat-ids.txt";
+	const Ledger       ledger      = ReadLedger(pluginFolder, storage.other, config);
+	std::string        refusal;
+	const exalted::Summary summary = config.enabled && (!ledger.codesKnown || !ledger.statIdsKnown) ? RecoverAndRun(io, config, ledger, SavesFolder(context), pluginFolder, refusal)
+	                                                                                               : exalted::Run(io, config);
+	const double tablesMs = Clock() - started;
+	for (const std::string& alert : io.alerts) {
+		Alert(alert);
+	}
+	// Exalted cannot start its tier: the characters that hold exalted items are named, because they
+	// will not load.
+	const auto stop = [&](const char* kind, const std::string& why) {
+		std::string named;
+		if (refusal.empty()) {
+			const std::vector<std::string> holders = exalted::FilesWithUnknownItems(ReadSaves(SavesFolder(context)), TablesFor(io, summary, true));
+			named = holders.empty() ? " No save holds exalted items." : " Characters holding exalted items cannot be loaded until this is fixed: " + Characters(holders) + ".";
+		}
+		snprintf(g_status, sizeof(g_status), "Exalted Items: %s - %s%s", kind, why.c_str(), named.c_str());
+		Alert(g_status);
+		ArmStrip(summary);
+	};
+	if (!refusal.empty()) {
+		stop("inactive", refusal);
+		return true;
+	}
 	if (!summary.ok) {
-		LogF("failed: %s (the game runs without exalted items)", summary.error.c_str());
-		snprintf(g_status, sizeof(g_status), "Exalted Items: failed - %s", summary.error.c_str());
+		stop("failed", summary.error + " (the game runs without exalted items)");
 		return true;
 	}
 	RemoveStale(io.genRoot, io.genRoot, summary.files);
+	ArmStrip(summary);
 	if (summary.builtIn) {
 		// The mod's own files are read as they are (no redirect), and codes.txt is left for the
 		// mod it was written for. Only the code hooks, fed from the mod's rows.
 		InstallPickers(context, summary.families);
-		InstallStrip(context, summary);
 		InstallFilterBox(context, summary);
 		g_legend.legend          = summary.legend;
 		g_legend.crystalCode     = summary.crystalCode;
@@ -2204,18 +2655,33 @@ D2RL_PLUGIN_EXPORT auto D2RLoaderLoadPlugin(const D2RL::PluginContext* context) 
 	}
 	MakeFolders(pluginFolder);
 	SaveCodes(codesPath, config.savedCodes, summary.codes);
+	if (summary.statIdsMade && !config.savedStatIds.Known()) {
+		// Written once; from here on only the migration tool changes it. (One that could not be
+		// read was kept aside when the saves had decided.)
+		const exalted::StatIds& ids = summary.statIds;
+		if (IsFile(statIdsPath)) {
+			MoveFileExW(statIdsPath.c_str(), (statIdsPath + L".unreadable-" + Stamp()).c_str(), 0);
+		}
+		if (!IsFile(statIdsPath) && WriteNewFile(statIdsPath, exalted::FormatStatIds(ids))) {
+			LogF("stat-ids.txt written: marker stat %d, roll stats %d to %d (%s)", ids.marker, ids.roll[0], ids.roll[exalted::kRollStatCount - 1],
+			     ids.legacy ? "the layout of 1.2.0, kept for the saved items" : "after the mod's own stats");
+		} else {
+			LogF("stat-ids.txt could not be written; the numbers are worked out again at the next start");
+		}
+	}
+	KeepPreviousCopy(pluginFolder, L"codes.txt");
+	KeepPreviousCopy(pluginFolder, L"stat-ids.txt");
 	const double redirectStarted = Clock();
 	const int    slots           = InstallRedirects(io, summary.files);
 	const double redirectMs      = Clock() - redirectStarted;
 	if (slots == 0) {
 		RemoveRedirects();
 		g_redirectCount = 0;
-		snprintf(g_status, sizeof(g_status), "Exalted Items: the adjusted files were built, but the file redirect could not be set up, so the game is NOT using them.");
-		LogF("%s", g_status);
+		g_stripArmed.store(false, std::memory_order_release);
+		stop("inactive", "the adjusted files were built, but the file redirect could not be set up, so the game is NOT using them.");
 		return true;
 	}
 	InstallPickers(context, summary.families);
-	InstallStrip(context, summary);
 	InstallFilterBox(context, summary);
 	g_legend.legend          = summary.legend;
 	g_legend.crystalCode     = summary.crystalCode;

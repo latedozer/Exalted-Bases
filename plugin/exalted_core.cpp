@@ -897,6 +897,7 @@ struct Bank {
 	std::string desecrationCode;         // "" = this bank has no Shard of Desecration
 	int         desecrationRows = 0;
 	bool        marker        = false;   // the "restored" stat is in this bank's tables
+	int         markerStat    = -1;      // its number
 	std::map<std::string, std::string> rollTwin; // restore property -> its twin that also writes the roll down
 	int         restoresAdded = 0;
 	int         crystalRows   = 0;
@@ -1268,7 +1269,16 @@ void AddDowngrades(Io& io, Bank& bank, const Config& config, const std::map<std:
 		list += (i != 0 ? " + " : "") + materials[i];
 	}
 	const int  cStrip = t.Col("mod 1"), cStripMin = t.Col("mod 1 min"), cStripMax = t.Col("mod 1 max");
-	const bool strip  = bank.marker && !bank.rollTwin.empty() && cStrip >= 0 && cStripMin >= 0 && cStripMax >= 0;
+	const bool strip  = bank.marker && !bank.rollTwin.empty() && cStrip >= 0 && cStripMin >= 0 && cStripMax >= 0 && config.stripHooked;
+	// Without the hook that takes a restore off, a restored item would go back to elite with its
+	// restore kept (and could be upgraded and restored again). Then these recipes take only an
+	// item that was never restored: the check the restore recipe makes (op 18, the marker is 0).
+	// With strip_on_downgrade off the player chose to keep restores: no such check.
+	const int  cOp = t.Col("op"), cParam = t.Col("param"), cValue = t.Col("value");
+	const bool guard = bank.marker && config.restoreStrip && !config.stripHooked && cOp >= 0 && cParam >= 0 && cValue >= 0;
+	if (guard) {
+		Logf(io, "%scubemain.txt: back to elite: the hook that takes a restore off is not in place, so these recipes take only items that were never restored", bank.dir.c_str());
+	}
 	for (const ItemTable* items : { &bank.weapons, &bank.armor }) {
 		for (const EliteFamily& family : items->families) {
 			const auto found = codes.find(family.eliteCode);
@@ -1295,6 +1305,11 @@ void AddDowngrades(Io& io, Bank& bank, const Config& config, const std::map<std:
 				t.Set(row, cStripMin, "0");
 				t.Set(row, cStripMax, "0");
 			}
+			if (guard) {
+				t.Set(row, cOp, "18"); // the input item's stat `param` equals `value`: not restored
+				t.Set(row, cParam, std::to_string(bank.markerStat));
+				t.Set(row, cValue, "0");
+			}
 			t.rows.push_back(std::move(row));
 			++bank.downgradesAdded;
 		}
@@ -1310,9 +1325,76 @@ std::string CubeKey(const std::string& cell) {
 	return Lower(Trim(key));
 }
 
+// The mod's own Exalted cube rows that disagree with this install: a restore row whose check
+// (op 18) is not on this install's marker stat, a back-to-elite row that checks another stat,
+// or a row naming a roll twin (xlt-r<n>) this install does not have. They are kept as the mod
+// has them (they are the mod's); the log and the console say so, because such a row can let an
+// item be restored twice or turn it back without taking its restore off.
+void CheckKeptRows(Io& io, const Bank& bank, int markerStat, const std::set<std::string>& twins, const std::map<std::string, std::string>& codes) {
+	const Table& t = bank.cube;
+	const int    cDesc = t.Col("description"), cInput = t.Col("input 1"), cOut = t.Col("output");
+	if (!t.loaded || cDesc < 0 || cInput < 0 || cOut < 0) {
+		return;
+	}
+	const int   cEnabled = t.Col("enabled"), cOp = t.Col("op"), cParam = t.Col("param"), cValue = t.Col("value");
+	std::set<std::string> exalted;
+	for (const auto& entry : codes) {
+		exalted.insert(entry.second);
+	}
+	int         wrong = 0;
+	std::string first;
+	for (const auto& cells : t.rows) {
+		if (!StartsWith(t.Get(cells, cDesc), kRowMarker)) {
+			continue;
+		}
+		const std::vector<std::string> row = t.WholeRow(cells);
+		if (cEnabled >= 0 && Trim(t.Get(row, cEnabled)) == "0") {
+			continue; // (a recipe the mod took away)
+		}
+		const std::string output = CubeKey(t.Get(row, cOut));
+		if (output.find("exc") != std::string::npos) {
+			continue; // an upgrade checks no stat of the plugin's
+		}
+		const std::string input = CubeKey(t.Get(row, cInput));
+		if (exalted.count(input.substr(0, input.find(','))) == 0) {
+			continue; // (a row for no exalted base of this install: IndexModRows says so)
+		}
+		const bool        downgrade = output.find("eli") != std::string::npos;
+		const std::string op = cOp >= 0 ? Trim(t.Get(row, cOp)) : "", param = cParam >= 0 ? Trim(t.Get(row, cParam)) : "", value = cValue >= 0 ? Trim(t.Get(row, cValue)) : "";
+		std::string       why;
+		if (!downgrade && markerStat >= 0 && (op != "18" || param != std::to_string(markerStat) || value != "0")) {
+			why = op != "18" ? "it does not check that the item was never restored (op 18)" : "its check is on stat " + param + " = " + value + ", this install's restore marker is stat " + std::to_string(markerStat);
+		} else if (downgrade && op == "18" && markerStat >= 0 && param != std::to_string(markerStat)) {
+			why = "its check is on stat " + param + ", this install's restore marker is stat " + std::to_string(markerStat);
+		}
+		for (int i = 1; i <= 5 && why.empty(); ++i) {
+			const std::string property = CubeKey(t.Get(row, t.Col(("mod " + std::to_string(i)).c_str())));
+			if (StartsWith(property, "xlt-r") && property != kRestoredPropertyCode && twins.count(property) == 0) {
+				why = "it names the roll property '" + property + "', which this install does not have";
+			}
+		}
+		if (why.empty()) {
+			continue;
+		}
+		if (++wrong <= 3) {
+			Logf(io, "%scubemain.txt: the mod's row '%s' disagrees with this install: %s. Kept as the mod has it.", bank.dir.c_str(), t.Get(row, cDesc).c_str(), why.c_str());
+		}
+		if (first.empty()) {
+			first = "'" + t.Get(row, cDesc).substr(strlen(kRowMarker)) + "': " + why;
+		}
+	}
+	if (wrong > 3) {
+		Logf(io, "%scubemain.txt: ... %d of the mod's Exalted rows disagree with this install", bank.dir.c_str(), wrong);
+	}
+	if (wrong > 0) {
+		io.Alert("Exalted Items: WARNING - " + std::to_string(wrong) + " of the mod's own Exalted cube rows disagree with this install (" + first +
+		         "). They are kept as the mod has them; see the log.");
+	}
+}
+
 // Cube rows a mod brings for Exalted Items itself: their description starts with the row
-// marker. The plugin never writes into a mod, so such a row is the mod's (a D2RMM mod made by
-// the Live Suite's export, or written by hand): it is kept exactly as it is, and the plugin makes
+// marker. The plugin never writes into a mod, so such a row is the mod's (exported from a game
+// that ran the plugin, or written by hand): it is kept exactly as it is, and the plugin makes
 // no row of its own for the same thing. A row with `enabled` 0 counts too: that is how a mod
 // takes one of the plugin's recipes away. The key of a row:
 //   upgrade (output names "exc"):    input 1, e.g. "tors,eli,uni"
@@ -2055,9 +2137,10 @@ void AddCrystal(Io& io, Bank& bank, const std::string& code, const std::string& 
 	bankCode = code;
 }
 
-// The stat and the property a restored item is marked with. See kRestoredStatId for why the
-// stat has a fixed number.
-void AddMarker(Io& io, Bank& bank, const Config& config) {
+// The stat and the property a restored item is marked with, and the roll stats: every one at its
+// number in `ids` (see StatIds). Rows between the mod's last stat and those numbers are filled:
+// "xlt_unused_<n>" in the 1.2.0 layout, "xlt_reserved_<n>" otherwise (only when the mod shrank).
+void AddMarker(Io& io, Bank& bank, const Config& config, const StatIds& ids) {
 	Table&    s     = bank.stats;
 	Table&    p     = bank.props;
 	const int cStat = s.Col("Stat"), cId = s.Col("*ID");
@@ -2066,7 +2149,11 @@ void AddMarker(Io& io, Bank& bank, const Config& config) {
 		Logf(io, "%sitemstatcost.txt / properties.txt could not be read: items cannot be restored in this set of tables", bank.dir.c_str());
 		return;
 	}
-	int from = -1;
+	if (!ids.Known() || ids.Highest() > kMaxStatId) {
+		Logf(io, "%sthe plugin's stat numbers are not known: items cannot be restored in this set of tables", bank.dir.c_str());
+		return;
+	}
+	int from = -1, rollFrom = -1;
 	for (size_t i = 0; i < s.rows.size(); ++i) {
 		const std::string name = Trim(s.Get(s.rows[i], cStat));
 		if (name.empty()) {
@@ -2074,81 +2161,141 @@ void AddMarker(Io& io, Bank& bank, const Config& config) {
 			Logf(io, "%sitemstatcost.txt has a row without a name (row %zu): items cannot be restored in this set of tables", bank.dir.c_str(), i + 2);
 			return;
 		}
-		if (name == kMarkerTemplate) {
-			from = static_cast<int>(i);
-		}
+		from     = name == kMarkerTemplate ? static_cast<int>(i) : from;
+		rollFrom = name == kRollTemplate ? static_cast<int>(i) : rollFrom;
 	}
-	if (from < 0 || s.rows.size() > static_cast<size_t>(kRestoredStatId)) {
-		Logf(io, from < 0 ? "%sitemstatcost.txt has no '%s' row to build the marker from: items cannot be restored in this set of tables"
-		                  : "%sitemstatcost.txt already has more than %d stats, so the marker's number is taken: items cannot be restored in this set of tables",
-		     bank.dir.c_str(), from < 0 ? kMarkerTemplate : std::to_string(kRestoredStatId).c_str());
+	if (from < 0) {
+		Logf(io, "%sitemstatcost.txt has no '%s' row to build the marker from: items cannot be restored in this set of tables", bank.dir.c_str(), kMarkerTemplate);
+		return;
+	}
+	// Rows the mod already has at the map's numbers. A padding row (nothing in it but its name and
+	// number, whatever the name) or one of the plugin's own rows is the plugin's to fill. Any
+	// other row there is a stat of the mod's own, and then neither can move (saved items name both
+	// by number): no restoring here. Rows past the map's numbers (other plugins' rows, which come
+	// after the plugin's) are kept as they are, after the plugin's rows.
+	std::vector<std::vector<std::string>> after; // the mod's rows past the map's numbers
+	if (s.rows.size() > static_cast<size_t>(ids.Lowest())) {
+		const auto fillable = [&](const std::vector<std::string>& row) {
+			const std::string name = Trim(s.Get(row, cStat));
+			if (name.rfind("xlt_", 0) == 0) {
+				return true; // (the plugin's own row: made again)
+			}
+			bool pad = true;
+			for (size_t c = 0; pad && c < row.size(); ++c) {
+				pad = static_cast<int>(c) == cStat || static_cast<int>(c) == cId || static_cast<int>(c) == s.Col("*eol") || Trim(row[c]).empty();
+			}
+			return pad;
+		};
+		std::string taken;
+		for (size_t n = static_cast<size_t>(ids.Lowest()); n < s.rows.size() && n <= static_cast<size_t>(ids.Highest()) && taken.empty(); ++n) {
+			if (!fillable(s.rows[n])) {
+				taken = std::to_string(n) + " ('" + Trim(s.Get(s.rows[n], cStat)) + "')";
+			}
+		}
+		if (!taken.empty()) {
+			Logf(io, "%sitemstatcost.txt has a stat of its own at %s, a number stat-ids.txt gives the plugin's stats (%d to %d): items cannot be restored in this set of tables. "
+			     "Neither can move: saved items name both by number.", bank.dir.c_str(), taken.c_str(), ids.Lowest(), ids.Highest());
+			io.Alert("Exalted Items: WARNING - the mod has a stat of its own at " + taken + ", a number Exalted's restore stats use (" + std::to_string(ids.Lowest()) + " to " +
+			         std::to_string(ids.Highest()) + "). Restoring is off, and restored items in the saves may read wrong or not load. Back up the saves; see the log.");
+			return;
+		}
+		if (s.rows.size() > static_cast<size_t>(ids.Highest()) + 1) {
+			after.assign(s.rows.begin() + ids.Highest() + 1, s.rows.end());
+		}
+		Logf(io, "%sitemstatcost.txt: rows at the plugin's numbers (%d to %d) filled in from stat-ids.txt; %zu rows after them kept as they are", bank.dir.c_str(), ids.Lowest(), ids.Highest(), after.size());
+	}
+	rollFrom = rollFrom >= ids.Lowest() ? -1 : rollFrom; // (templates are the mod's own stats, below the map)
+	if (from >= ids.Lowest()) {
+		Logf(io, "%sitemstatcost.txt: the '%s' row is at a number of the map: items cannot be restored in this set of tables", bank.dir.c_str(), kMarkerTemplate);
 		return;
 	}
 	std::vector<std::string> marker = s.rows[static_cast<size_t>(from)];
-	const size_t             original = s.rows.size(); // the mod's own stats
-	while (s.rows.size() < static_cast<size_t>(kRestoredStatId)) {
-		std::vector<std::string> filler = s.NewRow();
-		s.Set(filler, cStat, "xlt_unused_" + std::to_string(s.rows.size()));
-		s.Set(filler, cId, std::to_string(s.rows.size()));
-		s.rows.push_back(std::move(filler));
-	}
-	// The hidden stats a restore's rolls are written into: the filler rows just below the
-	// marker, when they are fillers (a mod with that many stats of its own gets none), shaped
-	// like "requirements %" (a signed amount the save holds from -100 to 155) without any text.
-	// Each restore property gets a twin whose extra function 3 ("the same amount as the first
-	// function rolled") fills its hidden stat.
-	int rollFrom = -1;
-	for (size_t i = 0; i < original; ++i) {
-		if (Trim(s.Get(s.rows[i], cStat)) == kRollTemplate) {
-			rollFrom = static_cast<int>(i);
+
+	// The roll stats' twins: a property of the mod that has a free function slot.
+	struct Twin { int source = -1, slot = -1; };
+	Twin twins[kRollStatCount];
+	for (int k = 0; k < kRollStatCount && config.restoreStrip && rollFrom >= 0; ++k) {
+		if (ids.roll[k] < 0) {
+			continue;
+		}
+		int source = -1, slot = -1;
+		for (size_t i = 0; i < p.rows.size() && source < 0; ++i) {
+			if (p.Get(p.rows[i], cCode) == kRollProperties[k]) {
+				source = static_cast<int>(i);
+			}
+		}
+		for (int n = 2; source >= 0 && n <= 7 && slot < 0; ++n) {
+			const int cF = p.Col(("func" + std::to_string(n)).c_str()), cS = p.Col(("stat" + std::to_string(n)).c_str());
+			if (cF >= 0 && cS >= 0 && Trim(p.Get(p.rows[static_cast<size_t>(source)], cF)).empty() && Trim(p.Get(p.rows[static_cast<size_t>(source)], cS)).empty()) {
+				slot = n;
+			}
+		}
+		if (source >= 0 && slot >= 0 && !Trim(p.Get(p.rows[static_cast<size_t>(source)], cFunc)).empty()) {
+			twins[k] = Twin { source, slot }; // (else the mod has no such property, or its seven functions are all in use)
 		}
 	}
-	if (config.restoreStrip && rollFrom >= 0 && original + static_cast<size_t>(kRollStatCount) <= static_cast<size_t>(kRollStatTop) + 1) {
-		for (int k = 0; k < kRollStatCount; ++k) {
-			int source = -1, slot = -1;
-			for (size_t i = 0; i < p.rows.size() && source < 0; ++i) {
-				if (p.Get(p.rows[i], cCode) == kRollProperties[k]) {
-					source = static_cast<int>(i);
+
+	// Every row from the mod's last stat up to the highest number of the map.
+	const auto filler = [&](size_t n, const char* prefix) {
+		std::vector<std::string> row = s.NewRow();
+		s.Set(row, cStat, prefix + std::to_string(n));
+		s.Set(row, cId, std::to_string(n));
+		return row;
+	};
+	if (s.rows.size() > static_cast<size_t>(ids.Lowest())) {
+		s.rows.resize(static_cast<size_t>(ids.Lowest())); // (checked above: fillable; the rows after are in `after`)
+	}
+	while (s.rows.size() <= static_cast<size_t>(ids.Highest())) {
+		const int n = static_cast<int>(s.rows.size());
+		int       k = -1;
+		for (int r = 0; r < kRollStatCount; ++r) {
+			k = ids.roll[r] == n ? r : k;
+		}
+		if (n == ids.marker) {
+			s.Set(marker, cStat, kRestoredStat);
+			s.Set(marker, cId, std::to_string(n));
+			if (config.restoreShowLine) {
+				s.Set(marker, s.Col("descstrpos"), kRestoredString);
+				s.Set(marker, s.Col("descstrneg"), kRestoredString);
+			} else {
+				for (const char* column : { "descpriority", "descfunc", "descval", "descstrpos", "descstrneg", "descstr2" }) {
+					s.Set(marker, s.Col(column), "");
 				}
 			}
-			for (int n = 2; source >= 0 && n <= 7 && slot < 0; ++n) {
-				const int cF = p.Col(("func" + std::to_string(n)).c_str()), cS = p.Col(("stat" + std::to_string(n)).c_str());
-				if (cF >= 0 && cS >= 0 && Trim(p.Get(p.rows[static_cast<size_t>(source)], cF)).empty() && Trim(p.Get(p.rows[static_cast<size_t>(source)], cS)).empty()) {
-					slot = n;
-				}
-			}
-			if (source < 0 || slot < 0 || Trim(p.Get(p.rows[static_cast<size_t>(source)], cFunc)).empty()) {
-				continue; // the mod has no such property, or its seven functions are all in use
-			}
-			const std::string        statName = "xlt_roll_" + std::to_string(k), code = "xlt-r" + std::to_string(k);
-			const size_t             id       = static_cast<size_t>(kRollStatTop - k);
-			std::vector<std::string> stat     = s.rows[static_cast<size_t>(rollFrom)];
-			s.Set(stat, cStat, statName);
-			s.Set(stat, cId, std::to_string(id));
+			s.rows.push_back(std::move(marker));
+		} else if (k >= 0 && rollFrom >= 0 && (twins[k].source >= 0 || !ids.legacy)) {
+			// The hidden stats a restore's rolls are written into, shaped like "requirements %"
+			// (a signed amount the save holds from -100 to 155) without any text. Each restore
+			// property gets a twin whose extra function 3 ("the same amount as the first function
+			// rolled") fills its hidden stat. (In the 1.2.0 layout a roll without a twin stayed an
+			// unused row, and stays one.)
+			std::vector<std::string> stat = s.rows[static_cast<size_t>(rollFrom)];
+			s.Set(stat, cStat, "xlt_roll_" + std::to_string(k));
+			s.Set(stat, cId, std::to_string(n));
 			// No text, and no part in the item's price.
 			for (const char* column : { "descpriority", "descfunc", "descval", "descstrpos", "descstrneg", "descstr2", "dgrp", "dgrpfunc", "dgrpval", "dgrpstrpos", "dgrpstrneg", "dgrpstr2", "Add", "Multiply" }) {
 				s.Set(stat, s.Col(column), "");
 			}
-			s.rows[id] = std::move(stat);
-			std::vector<std::string> twin = p.rows[static_cast<size_t>(source)];
-			p.Set(twin, cCode, code);
-			p.Set(twin, p.Col(("func" + std::to_string(slot)).c_str()), "3");
-			p.Set(twin, p.Col(("stat" + std::to_string(slot)).c_str()), statName);
-			p.rows.push_back(std::move(twin));
-			bank.rollTwin[kRollProperties[k]] = code;
+			s.rows.push_back(std::move(stat));
+		} else {
+			s.rows.push_back(filler(static_cast<size_t>(n), ids.legacy ? "xlt_unused_" : "xlt_reserved_"));
 		}
 	}
-	s.Set(marker, cStat, kRestoredStat);
-	s.Set(marker, cId, std::to_string(kRestoredStatId));
-	if (config.restoreShowLine) {
-		s.Set(marker, s.Col("descstrpos"), kRestoredString);
-		s.Set(marker, s.Col("descstrneg"), kRestoredString);
-	} else {
-		for (const char* column : { "descpriority", "descfunc", "descval", "descstrpos", "descstrneg", "descstr2" }) {
-			s.Set(marker, s.Col(column), "");
-		}
+	for (auto& row : after) {
+		s.rows.push_back(std::move(row));
 	}
-	s.rows.push_back(std::move(marker));
+	for (int k = 0; k < kRollStatCount; ++k) {
+		if (twins[k].source < 0) {
+			continue;
+		}
+		const std::string        statName = "xlt_roll_" + std::to_string(k), code = "xlt-r" + std::to_string(k);
+		std::vector<std::string> twin     = p.rows[static_cast<size_t>(twins[k].source)];
+		p.Set(twin, cCode, code);
+		p.Set(twin, p.Col(("func" + std::to_string(twins[k].slot)).c_str()), "3");
+		p.Set(twin, p.Col(("stat" + std::to_string(twins[k].slot)).c_str()), statName);
+		p.rows.push_back(std::move(twin));
+		bank.rollTwin[kRollProperties[k]] = code;
+	}
 
 	std::vector<std::string> property = p.NewRow();
 	p.Set(property, cCode, kRestoredProperty);
@@ -2156,7 +2303,8 @@ void AddMarker(Io& io, Bank& bank, const Config& config) {
 	p.Set(property, cFunc, "1"); // "add this much of the stat"
 	p.Set(property, cPropStat, kRestoredStat);
 	p.rows.push_back(std::move(property));
-	bank.marker = true;
+	bank.marker     = true;
+	bank.markerStat = ids.marker;
 }
 
 const RestoreKind* KindOf(const TypeTree& types, const std::string& type, const std::string& type2) {
@@ -2253,7 +2401,7 @@ void AddRestores(Io& io, Bank& bank, const Config& config, const std::map<std::s
 			t.Set(row, cVersion, "100");
 			t.Set(row, cNum, std::to_string(inputs));
 			t.Set(row, cOp, "18"); // the input item's stat `param` equals `value`: not restored yet
-			t.Set(row, cParam, std::to_string(kRestoredStatId));
+			t.Set(row, cParam, std::to_string(bank.markerStat));
 			t.Set(row, cValue, "0");
 			t.Set(row, cOut, "useitem");
 			t.Set(row, cMod[0], kRestoredProperty);
@@ -2965,26 +3113,47 @@ void UseBuiltIn(Io& io, std::vector<Bank>& banks, const Config& config, Summary&
 		}
 	}
 
-	// The restore strip goes by stat numbers saved on items: "restored" at kRestoredStatId and
-	// the roll stats counted down from kRollStatTop. They are used only if they are where the
-	// saves expect them, by name.
-	if (config.restoreStrip) {
+	// The plugin's stats, by name wherever the exported mod has them (their numbers are the ones
+	// the saves of the game it was exported from hold). The restore strip goes by them.
+	{
 		Table stats = first.stats.loaded ? first.stats : LoadTable(io, first.dir, "itemstatcost.txt");
 		Table props = first.props.loaded ? first.props : LoadTable(io, first.dir, "properties.txt");
 		const int cStat = stats.Col("Stat"), cCode = props.Col("code");
-		const auto statAt = [&](int id) { return cStat >= 0 && id >= 0 && static_cast<size_t>(id) < stats.rows.size() ? Trim(stats.Get(stats.rows[static_cast<size_t>(id)], cStat)) : std::string(); };
 		std::set<std::string> propCodes;
 		for (const auto& row : props.rows) {
 			propCodes.insert(Trim(props.Get(row, cCode)));
 		}
-		if (statAt(kRestoredStatId) != kRestoredStat) {
-			Logf(io, "itemstatcost.txt has no '%s' at number %d: a restore cannot be taken off in this mod", kRestoredStat, kRestoredStatId);
-		} else {
+		for (size_t i = 0; cStat >= 0 && i < stats.rows.size(); ++i) {
+			const std::string name = Trim(stats.Get(stats.rows[i], cStat));
+			if (name == kRestoredStat) {
+				summary.statIds.marker = static_cast<int>(i);
+			}
 			for (int k = 0; k < kRollStatCount; ++k) {
-				if (statAt(kRollStatTop - k) == "xlt_roll_" + std::to_string(k) && propCodes.count("xlt-r" + std::to_string(k)) != 0) {
-					++summary.rollStats;
+				if (name == "xlt_roll_" + std::to_string(k)) {
+					summary.statIds.roll[k] = static_cast<int>(i);
 				}
 			}
+		}
+		summary.statIds.legacy = summary.statIds.marker == kLegacyMarkerStat;
+		if (!summary.statIds.Known()) {
+			Logf(io, "itemstatcost.txt has no '%s': a restore cannot be taken off in this mod", kRestoredStat);
+		} else if (config.restoreStrip) {
+			for (int k = 0; k < kRollStatCount; ++k) {
+				summary.rollStats += summary.statIds.roll[k] >= 0 && propCodes.count("xlt-r" + std::to_string(k)) != 0 ? 1 : 0;
+			}
+		}
+		std::set<std::string> twins;
+		for (const std::string& code : propCodes) {
+			if (StartsWith(code, "xlt-r") && code != kRestoredPropertyCode) {
+				twins.insert(code);
+			}
+		}
+		for (const Bank& bank : banks) {
+			CheckKeptRows(io, bank, summary.statIds.marker, twins, codes);
+		}
+		if (config.restoreStrip && !config.stripHooked) {
+			io.Log("back to elite: the hook that takes a restore off is not in place, and this mod's back-to-elite rows are its own: they are used as they are, with no check "
+			       "that refuses a restored item (such an item goes back to elite with its restore kept)");
 		}
 	}
 
@@ -3001,6 +3170,149 @@ void UseBuiltIn(Io& io, std::vector<Bank>& banks, const Config& config, Summary&
 	     summary.desecrationRows);
 	io.Log("settings that shape the tables (drop levels, terror zone only, recipe inputs, drop weights, restore attributes, stash slots, names) do nothing for this mod: change the mod's rows instead");
 	summary.ok = true;
+}
+
+// --- codes from tables an earlier start stored ------------------------------------------
+
+std::vector<std::pair<std::string, std::string>> CodesInTables(const std::string& armor, const std::string& weapons, const std::string& misc) {
+	std::map<std::string, std::string> found; // elite code (or material key) -> exalted code
+	for (const std::string* text : { &armor, &weapons }) {
+		Table t;
+		t.Parse(std::string(*text));
+		const int cName = t.Col("name"), cCode = t.Col("code"), cUltra = t.Col("ultracode");
+		for (size_t i = 0; t.loaded && cName >= 0 && cCode >= 0 && cUltra >= 0 && i < t.rows.size(); ++i) {
+			const auto&       row  = t.rows[i];
+			const std::string code = Trim(t.Get(row, cCode)), elite = Trim(t.Get(row, cUltra));
+			if (StartsWith(t.Get(row, cName), kRowMarker) && !code.empty() && !elite.empty()) {
+				found.emplace(elite, code);
+			}
+		}
+	}
+	Table m;
+	m.Parse(std::string(misc));
+	const int cName = m.Col("name"), cCode = m.Col("code");
+	for (size_t i = 0; m.loaded && cName >= 0 && cCode >= 0 && i < m.rows.size(); ++i) {
+		const std::string name = m.Get(m.rows[i], cName), code = Trim(m.Get(m.rows[i], cCode));
+		if (name == std::string(kRowMarker) + "Restoration Crystal" && !code.empty()) {
+			found.emplace(kCrystalKey, code);
+		} else if (name == std::string(kRowMarker) + "Shard of Desecration" && !code.empty()) {
+			found.emplace(kDesecrationKey, code);
+		}
+	}
+	return { found.begin(), found.end() };
+}
+
+// --- the stat numbers (stat-ids.txt) ---------------------------------------------------
+
+int StatIds::Lowest() const {
+	int low = marker;
+	for (const int r : roll) {
+		low = r >= 0 && (low < 0 || r < low) ? r : low;
+	}
+	return low;
+}
+
+int StatIds::Highest() const {
+	int high = marker;
+	for (const int r : roll) {
+		high = std::max(high, r);
+	}
+	return high;
+}
+
+bool StatIds::operator==(const StatIds& o) const {
+	return marker == o.marker && std::equal(std::begin(roll), std::end(roll), std::begin(o.roll)) && legacy == o.legacy;
+}
+
+StatIds LegacyStatIds() {
+	StatIds ids;
+	ids.legacy = true;
+	ids.marker = kLegacyMarkerStat;
+	for (int k = 0; k < kRollStatCount; ++k) {
+		ids.roll[k] = kRollStatTop - k;
+	}
+	return ids;
+}
+
+StatIds NewStatIds(int first) {
+	StatIds ids;
+	ids.marker = first;
+	for (int k = 0; k < kRollStatCount; ++k) {
+		ids.roll[k] = first + 1 + k;
+	}
+	return ids;
+}
+
+std::string FormatStatIds(const StatIds& ids) {
+	std::string text = "# Exalted Items: the numbers of its own stats in itemstatcost.txt (the same in both sets of tables).\r\n"
+	                   "# Saved items name their stats by these numbers. Do not edit or delete this file: only the\r\n"
+	                   "# migration tool changes it, after moving the saved items (with backups).\r\n"
+	                   "#   layout=packed: right after the mod's stats; layout=legacy: 1.2.0's fixed numbers (500 down)\r\n";
+	text += std::string("layout=") + (ids.legacy ? "legacy" : "packed") + "\r\n";
+	text += "marker=" + std::to_string(ids.marker) + "\r\n";
+	for (int k = 0; k < kRollStatCount; ++k) {
+		if (ids.roll[k] >= 0) {
+			text += "roll." + std::to_string(k) + "=" + std::to_string(ids.roll[k]) + "\r\n";
+		}
+	}
+	return text;
+}
+
+bool ParseStatIds(const std::string& text, StatIds& ids, std::string& why) {
+	StatIds    out;
+	bool       layout = false;
+	std::set<int> used;
+	const auto number = [](const std::string& v, int& n) {
+		if (v.empty() || v.size() > 4 || v.find_first_not_of("0123456789") != std::string::npos) {
+			return false;
+		}
+		n = atoi(v.c_str());
+		return n >= 0 && n <= kMaxStatId;
+	};
+	std::string line;
+	int         lineNo = 0;
+	for (const char c : text + "\n") {
+		if (c != '\n') {
+			if (c != '\r' && c != ' ' && c != '\t') {
+				line += c;
+			}
+			continue;
+		}
+		++lineNo;
+		const size_t eq = line.find('=');
+		if (!line.empty() && line[0] != '#') {
+			const std::string key = eq == std::string::npos ? line : line.substr(0, eq), value = eq == std::string::npos ? "" : line.substr(eq + 1);
+			int n = -1;
+			bool ok = false;
+			if (key == "layout") {
+				ok = value == "legacy" || value == "packed";
+				out.legacy = value == "legacy";
+				layout     = ok;
+			} else if (key == "marker") {
+				ok = number(value, n) && used.insert(n).second;
+				out.marker = n;
+			} else if (key.rfind("roll.", 0) == 0) {
+				int k = -1;
+				ok = number(key.substr(5), k) && k < kRollStatCount && out.roll[k] < 0 && number(value, n) && used.insert(n).second;
+				if (ok) {
+					out.roll[k] = n;
+				}
+			} else {
+				ok = true; // a key this build does not know (a newer build's): ignored, so that build can be put back
+			}
+			if (!ok) {
+				why = "line " + std::to_string(lineNo) + " ('" + line + "') is not understood or repeats a number";
+				return false;
+			}
+		}
+		line.clear();
+	}
+	if (!layout || !out.Known()) {
+		why = layout ? "it has no marker line" : "it has no layout line";
+		return false;
+	}
+	ids = out;
+	return true;
 }
 
 Summary Run(Io& io, const Config& settings) {
@@ -3567,6 +3879,29 @@ Summary Run(Io& io, const Config& settings) {
 			io.Log("the Shard of Desecration has no slot in the stash's stacking tabs: it is kept as an ordinary item");
 		}
 
+		// The plugin's stat numbers: the map of an earlier run as it is; an install that ran
+		// 1.2.0 or older (it has codes but no map) keeps that layout; a new one gets numbers
+		// after the stats the loaded tables have (the larger set), the same in both banks.
+		if (config.savedStatIds.Known()) {
+			summary.statIds = config.savedStatIds;
+		} else {
+			bool anyStats = false;
+			int  first    = 0;
+			for (const Bank& bank : banks) {
+				anyStats = anyStats || bank.stats.loaded;
+				first    = std::max(first, static_cast<int>(bank.stats.rows.size()));
+			}
+			if (anyStats) {
+				// (Auto: 1.3.0's rule. The plugin never takes it on its own word when stat-ids.txt is
+				// missing: it checks the saves against the tables of each layout first.)
+				const bool legacy   = config.newStatLayout == Config::NewLayout::Legacy || (config.newStatLayout == Config::NewLayout::Auto && !config.savedCodes.empty());
+				summary.statIds     = legacy ? LegacyStatIds() : NewStatIds(first);
+				summary.statIdsMade = summary.statIds.Highest() <= kMaxStatId;
+				if (!summary.statIdsMade) {
+					summary.statIds = StatIds {};
+				}
+			}
+		}
 		// 5. Rows, families, recipes and loot rows for each bank.
 		for (Bank& bank : banks) {
 			AddItems(bank, bank.weapons, config, codes, nameKeys);
@@ -3587,10 +3922,17 @@ Summary Run(Io& io, const Config& settings) {
 			if (!crystalCode.empty()) {
 				AddCrystal(io, bank, crystalCode, crystalNameKey, summary.crystalSlots > 0, "Restoration Crystal", bank.crystalCode);
 				if (config.restoreEnabled && !bank.crystalCode.empty()) {
-					AddMarker(io, bank, config);
+					AddMarker(io, bank, config, summary.statIds);
 				}
 			}
 			IndexModRows(io, bank, codes);
+			{
+				std::set<std::string> twins;
+				for (const auto& entry : bank.rollTwin) {
+					twins.insert(entry.second);
+				}
+				CheckKeptRows(io, bank, bank.marker ? bank.markerStat : -1, twins, codes);
+			}
 			AddRecipes(io, bank, config);
 			AddDowngrades(io, bank, config, codes);
 			AddRestores(io, bank, config, codes);

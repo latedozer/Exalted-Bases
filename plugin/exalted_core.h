@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,7 +31,19 @@ struct Io {
 	// File names (no folders) directly inside a mod folder.
 	virtual void ListMod(const std::string& relDir, std::vector<std::string>& names) = 0;
 	virtual void Log(const char* text) = 0;
+	// Something the player must see: logged, and kept for a loud line on the game's console
+	// (each text once).
+	std::vector<std::string> alerts;
+	void Alert(const std::string& text) {
+		Log(text.c_str());
+		if (std::find(alerts.begin(), alerts.end(), text) == alerts.end()) {
+			alerts.push_back(text);
+		}
+	}
 };
+
+// (elite code or material key, exalted code) pairs: what codes.txt holds.
+using CodeList = std::vector<std::pair<std::string, std::string>>;
 
 struct Recipe {
 	std::string key;       // "<quality>_<weapon|armor>", e.g. "unique_weapon"
@@ -109,10 +122,33 @@ inline constexpr const char* kDesecrationKey  = "*desecration";
 inline constexpr const char* kDesecrationWord = "desecration";
 
 // A restored item carries a marker stat, which is what makes a second restore impossible. A
-// saved item names its stats by number, so the marker has a fixed number that does not move
-// when other mods add stats of their own (they are numbered upward from the game's last one;
-// the numbers in between are filled with unused rows). Item saves have room for numbers up to 510.
-constexpr int kRestoredStatId = 500;
+// saved item names its stats by number, so the numbers of the plugin's stats never move once
+// they are handed out: they are kept in stat-ids.txt (see StatIds). Up to 1.2.0 they were fixed
+// (marker 500, rolls 499 down) with unused rows in between; an install that ran such a version
+// keeps that layout (kLegacyMarkerStat) until a migration moves its saved items.
+// Item saves have room for numbers up to 510 (9 bits, 511 ends a stat list).
+constexpr int kLegacyMarkerStat = 500;
+constexpr int kMaxStatId        = 510;
+// The numbers of the plugin's own stats in itemstatcost.txt (the marker and the roll stats), the
+// same in both data banks. A number in the map never moves; only the migration tool renumbers.
+// Rows other plugins add come after these (the plugin's numbers first, theirs after).
+struct StatIds {
+	int  marker = -1;              // -1 = not known (no stat-ids.txt)
+	int  roll[kRollStatCount];     // -1 = none
+	bool legacy = false;           // the fixed layout of 1.2.0 and before (fillers below the rolls)
+	StatIds() { for (int& r : roll) { r = -1; } }
+	bool Known() const { return marker >= 0; }
+	int  Lowest() const;           // the lowest number the map holds
+	int  Highest() const;
+	bool operator==(const StatIds& o) const;
+};
+// 1.2.0's fixed numbers: marker 500, roll k at 499 - k.
+StatIds LegacyStatIds();
+// Numbers from `first` on (the stats the loaded tables already have): marker, then the rolls.
+StatIds NewStatIds(int first);
+// stat-ids.txt: "layout=legacy|packed", "marker=<n>", "roll.<k>=<n>".
+std::string FormatStatIds(const StatIds& ids);
+bool        ParseStatIds(const std::string& text, StatIds& ids, std::string& why);
 
 struct Config {
 	bool        enabled         = true;
@@ -157,7 +193,7 @@ struct Config {
 	bool        desecrationEnabled     = true;
 	std::string desecrationName        = "Shard of Desecration";
 	char        desecrationColor       = '8';
-	int         desecrationDropPercent = 100;
+	int         desecrationDropPercent = 50;
 	bool        desecrationStashSlot   = true;
 	int         desecrationSlotRight = 3, desecrationSlotDown = 3;
 	// The game's loot filter gets a fourth Quality box, beside Normal, Exceptional and Elite,
@@ -174,11 +210,24 @@ struct Config {
 	// item can be restored anew). Needs the amounts a restore rolled, which are kept on the
 	// item as hidden values (see kRollProperties). Off: nothing is recorded or taken off.
 	bool        restoreStrip    = true;
+	// The hook that takes a restore off is in place (the plugin places it before the tables are
+	// built, so they can go by it). false while restoreStrip is on: the recipes back to elite take
+	// only items that were never restored (the same check the restore recipe makes), so a restored
+	// item is refused rather than turned back with its restore kept.
+	bool        stripHooked     = true;
 	std::vector<std::string> restoreOff; // attributes turned off, as "<kind key>.<attribute key>"
 	// Exalted codes handed out by earlier runs (elite code, exalted code). A family keeps its
 	// code for good, whatever other mods add later. The crystal's code is kept here as well,
 	// under kCrystalKey.
 	std::vector<std::pair<std::string, std::string>> savedCodes;
+	// The stat numbers of stat-ids.txt (not Known() when there is no such file). The plugin writes
+	// the map once and never changes it; only the migration tool does (exalted_migrate).
+	StatIds savedStatIds;
+	// The layout of a new map when there is none (savedStatIds not Known()): auto = the rule of
+	// 1.3.0 (1.2.0's layout when there are saved codes, packed otherwise); the plugin asks for
+	// one of the two when it checks the saves after stat-ids.txt went missing.
+	enum class NewLayout { Auto, Packed, Legacy };
+	NewLayout newStatLayout = NewLayout::Auto;
 };
 
 // Uniques and set items are never repeated in the tables. Instead the plugin lets the game's
@@ -274,6 +323,8 @@ struct Summary {
 	bool        desecrationTinted = false;
 	int         desecrationRows   = 0;
 	int         desecrationSlots  = 0;
+	StatIds     statIds;           // the numbers this run used (built-in: found by name)
+	bool        statIdsMade    = false; // handed out by this run: to be written to stat-ids.txt
 	int         rollStats      = 0; // restore attributes whose roll is written down on the item (0 = a restore cannot be taken off)
 	int         restores       = 0; // restore recipes added per data bank
 	bool        filterBox      = false; // the loot filter's rule panel layout has the Exalted box
@@ -288,6 +339,11 @@ struct Summary {
 };
 
 Summary Run(Io& io, const Config& config);
+
+// The codes in tables a start stored (its armor.txt, weapons.txt and misc.txt): each exalted base
+// row's (elite code, exalted code), and the crystal's and shard's (kCrystalKey / kDesecrationKey,
+// code). How codes.txt is put together again when it and its previous copy are gone.
+std::vector<std::pair<std::string, std::string>> CodesInTables(const std::string& armor, const std::string& weapons, const std::string& misc);
 
 // The loot filter's rule panel layout with one more Quality box, "ExaltedQualityChbx", after
 // the Elite one: a copy of the Elite box that sends "exalted", `shift` to its right, with

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# A mod that brings some of Exalted Items' cube rows itself (a D2RMM mod made by the Live
-# Suite's export, or by hand) keeps them exactly as they are; the plugin makes the rest.
+# A mod that brings some of Exalted Items' cube rows itself (exported from a game that ran the
+# plugin, or written by hand) keeps them exactly as they are; the plugin makes the rest.
 #   check_mod_rows.py make <plugin's cubemain> <mod cubemain to extend>
 #   check_mod_rows.py check <cubemain made on that mod>
 import sys

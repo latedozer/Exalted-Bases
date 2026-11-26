@@ -222,16 +222,75 @@ void __cdecl WriteConsoleMessage(const D2RL::PluginContext*, const char* message
 	++g_consoleLines;
 	if (strstr(message, "last roll the game picked nothing for") != nullptr) ++g_missLines;
 }
-D2RL::ServiceQueryResult __cdecl QueryService(const D2RL::PluginContext*, D2RL::ServiceId, uint32_t, const void** service) noexcept {
-	if (service != nullptr) *service = nullptr;
-	return D2RL::ServiceQueryResult::UnknownService;
-}
-
 // What the game's own picker does in this test: note which base the item shows, say "picked".
 uint64_t OriginalPick(void*, void* item, void*) {
 	g_seenClass = static_cast<uint32_t*>(item)[1];
 	++g_originalCalls;
 	return g_pickNothing ? 0 : 1;
+}
+
+// The loader's mutation transaction, for one inline hook at a time. FAKE_REFUSE_STRIP=1: the
+// commit of the hook on the property routine fails (the loader refuses it). FAKE_NO_MUTATION=1:
+// the loader has no such service (the plugin uses the plain hook call then).
+struct Staged {
+	uint64_t rva;
+	void*    target;
+	bool     committed;
+};
+std::vector<Staged> g_staged;
+D2RL::Mutations::Result __cdecl MutBegin(const D2RL::PluginContext*, D2RL::Mutations::TransactionHandle* transaction) noexcept {
+	g_staged.push_back({ 0, nullptr, false });
+	*transaction = g_staged.size();
+	return D2RL::Mutations::Result::Success;
+}
+D2RL::Mutations::Result __cdecl MutStageBytes(const D2RL::PluginContext*, D2RL::Mutations::TransactionHandle, const D2RL::Mutations::BytePatchRequest*, D2RL::Mutations::OperationHandle*) noexcept {
+	return D2RL::Mutations::Result::Unsupported;
+}
+D2RL::Mutations::Result __cdecl MutStageRel32(const D2RL::PluginContext*, D2RL::Mutations::TransactionHandle, const D2RL::Mutations::Rel32PatchRequest*, D2RL::Mutations::OperationHandle*) noexcept {
+	return D2RL::Mutations::Result::Unsupported;
+}
+D2RL::Mutations::Result __cdecl MutStageHook(const D2RL::PluginContext*, D2RL::Mutations::TransactionHandle transaction, const D2RL::Mutations::InlineHookRequest* request,
+                                             D2RL::Mutations::OperationHandle* operation) noexcept {
+	if (transaction == 0 || transaction > g_staged.size() || request == nullptr || request->target == nullptr) return D2RL::Mutations::Result::InvalidArgument;
+	if (request->rva + request->expectedSize > kImageSize || memcmp(g_image + request->rva, request->expected, request->expectedSize) != 0) return D2RL::Mutations::Result::ExpectedBytesMismatch;
+	g_staged[transaction - 1] = { request->rva, request->target, false };
+	*operation                = 1;
+	return D2RL::Mutations::Result::Success;
+}
+D2RL::Mutations::Result __cdecl MutCommit(const D2RL::PluginContext*, D2RL::Mutations::TransactionHandle transaction, D2RL::Mutations::CommitResult* result) noexcept {
+	if (transaction == 0 || transaction > g_staged.size()) return D2RL::Mutations::Result::InvalidArgument;
+	Staged&    staged = g_staged[transaction - 1];
+	const bool refuse = staged.rva == kApplyProperty && getenv("FAKE_REFUSE_STRIP") != nullptr;
+	result->flags         = refuse ? D2RL::Mutations::CommitFlags::OriginalStateRestored : D2RL::Mutations::CommitFlags::None;
+	result->result        = refuse ? D2RL::Mutations::Result::CommitFailed : D2RL::Mutations::Result::Success;
+	result->failureReason = refuse ? D2RL::Mutations::FailureReason::HookEnableFailed : D2RL::Mutations::FailureReason::None;
+	if (refuse) {
+		printf("  [host] hook refused at 0x%llx (FAKE_REFUSE_STRIP)\n", static_cast<unsigned long long>(staged.rva));
+		return D2RL::Mutations::Result::CommitFailed;
+	}
+	staged.committed = true;
+	g_hooks.push_back({ staged.rva, staged.target });
+	printf("  [host] hook installed at 0x%llx (mutation transaction)\n", static_cast<unsigned long long>(staged.rva));
+	return D2RL::Mutations::Result::Success;
+}
+D2RL::Mutations::Result __cdecl MutOriginal(const D2RL::PluginContext*, D2RL::Mutations::TransactionHandle transaction, D2RL::Mutations::OperationHandle, void** original) noexcept {
+	if (transaction == 0 || transaction > g_staged.size() || !g_staged[transaction - 1].committed) return D2RL::Mutations::Result::InvalidState;
+	if (g_staged[transaction - 1].rva == kApplyProperty && getenv("FAKE_NO_ORIGINAL") != nullptr) return D2RL::Mutations::Result::InvalidState; // committed, but no way back
+	*original = g_staged[transaction - 1].rva == kApplyProperty ? reinterpret_cast<void*>(&ModelApply) : reinterpret_cast<void*>(&OriginalPick);
+	return D2RL::Mutations::Result::Success;
+}
+D2RL::Mutations::Result __cdecl MutCancel(const D2RL::PluginContext*, D2RL::Mutations::TransactionHandle) noexcept {
+	return D2RL::Mutations::Result::Success;
+}
+D2RL::MutationService g_mutation { D2RL::MutationServiceSize, D2RL::MutationService::AbiVersion, MutBegin, MutStageBytes, MutStageRel32, MutStageHook, MutCommit, MutOriginal, MutCancel };
+
+D2RL::ServiceQueryResult __cdecl QueryService(const D2RL::PluginContext*, D2RL::ServiceId id, uint32_t, const void** service) noexcept {
+	if (service != nullptr) *service = nullptr;
+	if (id == D2RL::ServiceId::Mutation && service != nullptr && getenv("FAKE_NO_MUTATION") == nullptr) {
+		*service = &g_mutation;
+		return D2RL::ServiceQueryResult::Success;
+	}
+	return D2RL::ServiceQueryResult::UnknownService;
 }
 
 bool __cdecl InstallInlineHook(const D2RL::PluginContext*, const D2RL::InlineHookRegistration* hook) noexcept {
@@ -616,6 +675,17 @@ int main(int argc, char** argv) {
 	for (const Hooked& hook : g_hooks) {
 		if (hook.rva == kApplyProperty) applyHook = hook.target;
 	}
+	if (applyHook != nullptr && getenv("FAKE_NO_ORIGINAL") != nullptr) {
+		// The hook is in the game's code, but the plugin got no way back to the routine: a call
+		// must come back at once (not wait for ever) without reaching the routine.
+		using ApplyFn = uint64_t (*)(int, void*, void*, void*, int, int, PropertyCall*, int, int, void*);
+		PropertyCall call { 1, 0, 0, 0 };
+		ModelItem    item;
+		const int    before = g_applyCalls;
+		const uint64_t result = reinterpret_cast<ApplyFn>(applyHook)(6, &item, nullptr, nullptr, 3, 4, &call, 0, 0, nullptr);
+		printf("back to elite: with no way back, the hook returned %llu at once (%d calls reached the routine)\n", static_cast<unsigned long long>(result), g_applyCalls - before);
+		applyHook = nullptr;
+	}
 	if (applyHook != nullptr) {
 		std::map<std::string, int> statIds, propertyIds;
 		std::string                text;
@@ -666,7 +736,8 @@ int main(int argc, char** argv) {
 		using ApplyFn = uint64_t (*)(int, void*, void*, void*, int, int, PropertyCall*, int, int, void*);
 		const auto hooked = reinterpret_cast<ApplyFn>(applyHook);
 		const auto apply  = [&](ModelItem& item, PropertyCall call) { return hooked(6, &item, reinterpret_cast<void*>(0x1111), reinterpret_cast<void*>(0x2222), 3, 4, &call, 0xab, 0x40, reinterpret_cast<void*>(0x3333)); };
-		bool ok = propertyIds.count("xlt-restored") != 0 && propertyIds.count("xlt-r0") != 0 && propertyIds.count("xlt-r12") != 0 && statIds["xlt_restored"] == 500;
+		bool ok = propertyIds.count("xlt-restored") != 0 && propertyIds.count("xlt-r0") != 0 && propertyIds.count("xlt-r12") != 0 && statIds.count("xlt_restored") != 0 && statIds.count("xlt_roll_1") != 0;
+		const int markerStat = ok ? statIds["xlt_restored"] : -1, roll1Stat = ok ? statIds["xlt_roll_1"] : -1;
 		srand(11);
 		for (int round = 0; ok && round < 50; ++round) {
 			ModelItem item;
@@ -679,12 +750,12 @@ int main(int argc, char** argv) {
 			apply(item, { propertyIds["xlt-r1"], 0, 30, 40 });
 			apply(item, { propertyIds["xlt-r7"], 0, 5, 10 });
 			apply(item, { propertyIds["xlt-r12"], 0, -10, -5 });
-			ok = ok && item.stats != before && item.stats.count(500) != 0 && item.stats.count(499 - 1) != 0;
+			ok = ok && item.stats != before && item.stats.count(markerStat) != 0 && item.stats.count(roll1Stat) != 0;
 			apply(item, { propertyIds["xlt-restored"], 0, 0, 0 }); // the sign
 			ok = ok && item.stats == before;
 		}
 		ModelItem old; // restored by a version that wrote nothing down
-		old.stats = { { 500, 1 }, { 39, 6 } };
+		old.stats = { { markerStat, 1 }, { 39, 6 } };
 		const auto oldBefore = old.stats;
 		apply(old, { propertyIds["xlt-restored"], 0, 0, 0 });
 		ok = ok && old.stats == oldBefore && g_applyBadArgs == 0;

@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <sys/stat.h>
 #include <utility>
@@ -147,6 +149,16 @@ int main(int argc, char** argv) {
 		if (key == "uniques") config.uniqueTiers = value;
 		if (key == "sets") config.setTiers = value;
 		if (key == "codes") ReadCodes(eq + 1, config.savedCodes);
+		if (key == "statids") {
+			std::ifstream in(eq + 1, std::ios::binary);
+			std::stringstream text;
+			text << in.rdbuf();
+			std::string why;
+			if (!exalted::ParseStatIds(text.str(), config.savedStatIds, why)) {
+				printf("statids file not read: %s\n", why.c_str());
+				return 2;
+			}
+		}
 		if (key == "savecodes") saveCodes = eq + 1;
 		if (key == "families") saveFamilies = eq + 1;
 		if (key == "legend") saveLegend = eq + 1;
@@ -165,6 +177,8 @@ int main(int argc, char** argv) {
 		if (key == "restore") config.restoreEnabled = value != 0;
 		if (key == "restoreline") config.restoreShowLine = value != 0;
 		if (key == "strip") config.restoreStrip = value != 0;
+		if (key == "striphook") config.stripHooked = value != 0;
+		if (key == "layout") config.newStatLayout = strcmp(eq + 1, "packed") == 0 ? exalted::Config::NewLayout::Packed : strcmp(eq + 1, "legacy") == 0 ? exalted::Config::NewLayout::Legacy : exalted::Config::NewLayout::Auto;
 		if (key == "restoreoff") config.restoreOff.push_back(eq + 1);
 		if (key == "recipes" && strcmp(eq + 1, "crystal") == 0) {
 			for (auto& recipe : config.recipes) recipe.materials = "crystal";
@@ -172,6 +186,14 @@ int main(int argc, char** argv) {
 	}
 	if (config.desecrationEnabled && !downgradeSet) config.downgrade = "desecration"; // as the settings file has it
 	const exalted::Summary s = exalted::Run(io, config);
+	for (const std::string& alert : io.alerts) printf("alert: %s\n", alert.c_str()); // (the plugin's loud console lines)
+	if (s.statIds.Known()) { // beside the output, as the plugin keeps it beside codes.txt
+		std::string dir = argv[3];
+		while (!dir.empty() && dir.back() == '/') dir.pop_back();
+		std::ofstream(dir + ".stat-ids.txt", std::ios::binary) << exalted::FormatStatIds(s.statIds);
+		printf("statids marker=%d roll0=%d roll12=%d layout=%s changed=%d\n", s.statIds.marker, s.statIds.roll[0], s.statIds.roll[exalted::kRollStatCount - 1],
+		       s.statIds.legacy ? "legacy" : "packed", s.statIdsMade ? 1 : 0);
+	}
 	printf("ok=%d error='%s' banks=%d bases=%d levels=%d..%d uniques=%d sets=%d recipes=%d downgrades=%d rungs=%d repointed=%d names=%d models=%d files=%d zone=%d zonerows=%d\n", s.ok, s.error.c_str(), s.banks, s.bases,
 	       s.levelLow, s.levelHigh, s.uniques, s.sets, s.recipes, s.downgrades, s.rungs, s.repointed, s.names, s.models, s.filesWritten, s.terrorZoneOnly ? 1 : 0, s.zoneRows);
 	if (s.builtIn) {

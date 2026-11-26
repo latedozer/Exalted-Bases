@@ -56,18 +56,18 @@ struct TwinTable {
 // True when `call` is the sign: the marker property (first stat = the marker, function 1) with
 // an amount of nothing.
 template <typename Engine>
-bool IsStripSign(Engine& engine, void* item, const PropertyCall& call) {
+bool IsStripSign(Engine& engine, void* item, const PropertyCall& call, const StatIds& ids) {
 	if (item == nullptr || call.min != 0 || call.max != 0 || call.id < 0 || call.id > 0xFFFF) {
 		return false;
 	}
 	const uint8_t* row = engine.Property(engine.Version(item), call.id);
-	return row != nullptr && row[kPropertyFuncs] == 1 && PropertyStat(row, 0) == kRestoredStatId;
+	return row != nullptr && row[kPropertyFuncs] == 1 && ids.marker >= 0 && PropertyStat(row, 0) == ids.marker;
 }
 
 // Takes the restore off. Returns how many attributes were taken off (0: the item has no
 // written-down rolls, and nothing was changed).
 template <typename Engine>
-int StripRestore(Engine& engine, void* item, const PropertyCall& sign, TwinTable& table) {
+int StripRestore(Engine& engine, void* item, const PropertyCall& sign, TwinTable& table, const StatIds& ids) {
 	const int version = engine.Version(item) & 0xFF;
 	if (!table.known[version]) {
 		for (int32_t& twin : table.twin[version]) {
@@ -78,8 +78,10 @@ int StripRestore(Engine& engine, void* item, const PropertyCall& sign, TwinTable
 			const uint8_t* row = engine.Property(version, id);
 			for (int slot = 1; row != nullptr && slot < kPropertySlots; ++slot) {
 				const int stat = PropertyStat(row, slot);
-				if (row[kPropertyFuncs + slot] == 3 && stat <= kRollStatTop && stat > kRollStatTop - kRollStatCount) {
-					table.twin[version][kRollStatTop - stat] = id;
+				for (int k = 0; row[kPropertyFuncs + slot] == 3 && k < kRollStatCount; ++k) {
+					if (ids.roll[k] >= 0 && stat == ids.roll[k]) {
+						table.twin[version][k] = id;
+					}
 				}
 			}
 		}
@@ -87,14 +89,17 @@ int StripRestore(Engine& engine, void* item, const PropertyCall& sign, TwinTable
 	}
 	int taken = 0;
 	for (int k = 0; k < kRollStatCount; ++k) {
-		const int amount = engine.Stat(item, kRollStatTop - k);
-		if (amount == 0 || table.twin[version][k] < 0) {
+		if (ids.roll[k] < 0 || table.twin[version][k] < 0) {
+			continue;
+		}
+		const int amount = engine.Stat(item, ids.roll[k]);
+		if (amount == 0) {
 			continue;
 		}
 		engine.Apply(PropertyCall { table.twin[version][k], 0, -amount, -amount });
 		++taken;
 	}
-	if (taken > 0 && engine.Stat(item, kRestoredStatId) != 0) {
+	if (taken > 0 && engine.Stat(item, ids.marker) != 0) {
 		engine.Apply(PropertyCall { sign.id, 0, -1, -1 });
 	}
 	return taken;

@@ -13,7 +13,7 @@
 # Nothing outside build/ is written.
 set -u
 cd "$(dirname "$0")/.."
-ROOT="$(cd ../.. && pwd)"
+ROOT="$PWD"; while [ "$ROOT" != / ] && [ ! -d "$ROOT/vanilla/data" ]; do ROOT="$(dirname "$ROOT")"; done
 REF="${1:?usage: same_output.sh <reference source dir> [mod data dir] [vanilla data dir]}"
 MOD="${2:-$HOME/FI/SteamLibrary/steamapps/common/Diablo II Resurrected/mods/D2RMM/D2RMM.mpq/data}"
 VAN="${3:-$ROOT/vanilla/data}"
